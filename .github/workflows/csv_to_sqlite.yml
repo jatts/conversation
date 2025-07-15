@@ -1,1 +1,43 @@
+name: CSV to SQLite Converter
 
+on:
+  push:
+    paths:
+      - 'conversation/csv/*.csv'
+
+jobs:
+  convert_csv_to_sqlite:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Tools
+        run: pip install pandas sqlite-utils
+
+      - name: Find Latest CSV File
+        id: findfile
+        run: |
+          latest_file=$(ls -t conversation/csv/*.csv | head -1)
+          echo "file=$latest_file" >> $GITHUB_OUTPUT
+
+      - name: Convert to SQLite DB
+        run: |
+          csv_file="${{ steps.findfile.outputs.file }}"
+          db_name=$(basename "$csv_file" .csv).db
+          sqlite-utils insert "$db_name" sc "$csv_file" --csv --detect-types
+          mkdir -p conversation/Ready
+          mv "$db_name" conversation/Ready/
+
+      - name: Commit Changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add conversation/Ready/*.db
+          git commit -m "Added new SQLite DB from CSV"
+          git push
