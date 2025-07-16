@@ -1,4 +1,4 @@
-name: CSV to SQLite Converter with ZIP Compression
+name: CSV to SQLite Converter with ZIP Compression and Clean DBversion
 
 on:
   push:
@@ -26,24 +26,24 @@ jobs:
           latest_file=$(ls -t conversation/csv/*.csv | head -1)
           echo "file=$latest_file" >> $GITHUB_OUTPUT
 
-      - name: Convert CSV to SQLite + Add Version Table
+      - name: Convert CSV to SQLite + Add Version Table (Clean DBversion)
         run: |
           csv_file="${{ steps.findfile.outputs.file }}"
           db_name=$(basename "$csv_file" .csv).db
 
-          # Step 1: Create lightweight DB setup
+          # Create SQLite DB with lightweight settings
           sqlite3 "$db_name" 'PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;'
 
-          # Step 2: Insert main CSV as 'sc'
+          # Insert CSV into 'sc'
           sqlite-utils insert "$db_name" sc "$csv_file" --csv --detect-types
 
-          # Step 3: Add databaseversion table
-          version_name=$(basename "$csv_file")
+          # Prepare version table WITHOUT .csv extension
+          version_name=$(basename "$csv_file" .csv)
           echo "DBversion" > version.csv
           echo "$version_name" >> version.csv
           sqlite-utils insert "$db_name" databaseversion version.csv --csv
 
-          # Step 4: Vacuum and Shrink
+          # Shrink DB size
           sqlite3 "$db_name" 'VACUUM;'
 
       - name: Compress SQLite DB as ZIP
@@ -62,5 +62,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Ready/*.zip
-          git commit -m "Added compressed SQLite ZIP DB"
+          git commit -m "Added compressed SQLite ZIP DB without .csv in version"
           git push
