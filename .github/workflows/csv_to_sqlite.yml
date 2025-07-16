@@ -1,4 +1,4 @@
-name: CSV to SQLite Converter with Version Table
+name: CSV to Lightweight SQLite Converter with Version Table
 
 on:
   push:
@@ -26,27 +26,30 @@ jobs:
           latest_file=$(ls -t conversation/csv/*.csv | head -1)
           echo "file=$latest_file" >> $GITHUB_OUTPUT
 
-      - name: Convert CSV to SQLite with Version Table
+      - name: Convert CSV to Lightweight SQLite
         run: |
           csv_file="${{ steps.findfile.outputs.file }}"
           db_name=$(basename "$csv_file" .csv).db
 
-          # Insert CSV Data as 'sc' table
-          sqlite-utils insert "$db_name" sc "$csv_file" --csv --detect-types
+          # Insert CSV Data as 'sc' table with optimized flags
+          sqlite-utils insert "$db_name" sc "$csv_file" --csv --detect-types --no-index --no-default-col-type
 
-          # Create 'databaseversion' table and insert DB version info
+          # Create version table lightweight
           version_name=$(basename "$csv_file")
           echo "DBversion" > version.csv
           echo "$version_name" >> version.csv
-          sqlite-utils insert "$db_name" databaseversion version.csv --csv --detect-types
-          
+          sqlite-utils insert "$db_name" databaseversion version.csv --csv --no-index --no-default-col-type
+
+          # Vacuum to shrink DB size
+          sqlite3 "$db_name" 'VACUUM;'
+
           mkdir -p conversation/Ready
           mv "$db_name" conversation/Ready/
           
-      - name: Commit SQLite DB
+      - name: Commit Lightweight SQLite DB
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Ready/*.db
-          git commit -m "Added new SQLite DB with version table"
+          git commit -m "Added optimized lightweight SQLite DB"
           git push
