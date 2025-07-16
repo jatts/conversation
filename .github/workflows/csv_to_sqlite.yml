@@ -1,4 +1,4 @@
-name: CSV to SQLite Converter
+name: CSV to SQLite Converter with Version Table
 
 on:
   push:
@@ -26,18 +26,27 @@ jobs:
           latest_file=$(ls -t conversation/csv/*.csv | head -1)
           echo "file=$latest_file" >> $GITHUB_OUTPUT
 
-      - name: Convert to SQLite DB
+      - name: Convert CSV to SQLite with Version Table
         run: |
           csv_file="${{ steps.findfile.outputs.file }}"
           db_name=$(basename "$csv_file" .csv).db
+
+          # Insert CSV Data as 'sc' table
           sqlite-utils insert "$db_name" sc "$csv_file" --csv --detect-types
+
+          # Create 'databaseversion' table and insert DB version info
+          version_name=$(basename "$csv_file")
+          echo "DBversion" > version.csv
+          echo "$version_name" >> version.csv
+          sqlite-utils insert "$db_name" databaseversion version.csv --csv --detect-types
+          
           mkdir -p conversation/Ready
           mv "$db_name" conversation/Ready/
-
-      - name: Commit Changes
+          
+      - name: Commit SQLite DB
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Ready/*.db
-          git commit -m "Added new SQLite DB from CSV"
+          git commit -m "Added new SQLite DB with version table"
           git push
