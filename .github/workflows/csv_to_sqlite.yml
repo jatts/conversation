@@ -1,73 +1,79 @@
 name: Merge scanning.xlsx + prices.xlsx to SQLite with ZIP
 
-on: push: paths: - 'conversation/csv/scanning.xlsx' - 'conversation/csv/prices.xlsx'
+on:
+  push:
+    paths:
+      - 'conversation/csv/scanning.xlsx'
+      - 'conversation/csv/prices.xlsx'
 
-jobs: merge_and_convert_excel: runs-on: ubuntu-latest
+jobs:
+  merge_and_convert_excel:
+    runs-on: ubuntu-latest
 
-steps:
-  - uses: actions/checkout@v3
+    steps:
+      - uses: actions/checkout@v3
 
-  - name: Check if both files exist
-    run: |
-      if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
-        echo "Both scanning.xlsx and prices.xlsx must exist in the repository!"
-        exit 1
-      fi
+      - name: Check if both files exist
+        run: |
+          if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
+            echo "Both scanning.xlsx and prices.xlsx must exist in the repository!"
+            exit 1
+          fi
 
-  - name: Set up Python
-    uses: actions/setup-python@v4
-    with:
-      python-version: '3.x'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
 
-  - name: Install Required Python Packages
-    run: pip install pandas openpyxl sqlite-utils
+      - name: Install Required Python Packages
+        run: pip install pandas openpyxl sqlite-utils
 
-  - name: Merge XLSX Files and Create SQLite
-    run: |
-      python3 <<EOF
-      import pandas as pd
-      import sqlite3
-      import zipfile
-      import os
+      - name: Merge XLSX Files and Create SQLite
+        run: |
+          python3 <<EOF
+          import pandas as pd
+          import sqlite3
+          import zipfile
+          import os
 
-      scan_file = "conversation/csv/scanning.xlsx"
-      price_file = "conversation/csv/prices.xlsx"
+          scan_file = "conversation/csv/scanning.xlsx"
+          price_file = "conversation/csv/prices.xlsx"
 
-      scan_df = pd.read_excel(scan_file)
-      price_df = pd.read_excel(price_file)
+          scan_df = pd.read_excel(scan_file)
+          price_df = pd.read_excel(price_file)
 
-      # Ensure only Barcode and OriginalPrice columns are used from prices.xlsx
-      price_df = price_df[["Barcode", "OriginalPrice"]]
+          # Ensure only Barcode and OriginalPrice columns are used from prices.xlsx
+          price_df = price_df[["Barcode", "OriginalPrice"]]
 
-      merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
+          merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
 
-      # Keep only relevant columns from scanning and merged OriginalPrice
-      final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
-      merged_df = merged_df[final_columns]
+          # Keep only relevant columns from scanning and merged OriginalPrice
+          final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
+          merged_df = merged_df[final_columns]
 
-      db_name = "merged.db"
-      conn = sqlite3.connect(db_name)
-      merged_df.to_sql("sc", conn, if_exists="replace", index=False)
+          db_name = "merged.db"
+          conn = sqlite3.connect(db_name)
+          merged_df.to_sql("sc", conn, if_exists="replace", index=False)
 
-      conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
-      conn.execute("INSERT INTO databaseversion (DBversion) VALUES ('merged')")
-      conn.commit()
-      conn.execute("VACUUM;")
-      conn.close()
+          conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
+          conn.execute("INSERT INTO databaseversion (DBversion) VALUES ('merged')")
+          conn.commit()
+          conn.execute("VACUUM;")
+          conn.close()
 
-      os.makedirs("conversation/Ready", exist_ok=True)
+          os.makedirs("conversation/Ready", exist_ok=True)
 
-      with zipfile.ZipFile("conversation/Ready/merged.zip", 'w', zipfile.ZIP_DEFLATED) as zipf:
-          zipf.write(db_name)
+          with zipfile.ZipFile("conversation/Ready/merged.zip", 'w', zipfile.ZIP_DEFLATED) as zipf:
+              zipf.write(db_name)
 
-      os.remove(db_name)
-      EOF
+          os.remove(db_name)
+          EOF
 
-  - name: Commit Merged ZIP DB
-    run: |
-      git config user.name "github-actions"
-      git config user.email "actions@github.com"
-      git add conversation/Ready/merged.zip
-      git commit -m "Added merged SQLite ZIP from scanning.xlsx and prices.xls
-      x"
-      git push
+      - name: Commit Merged ZIP DB
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add conversation/Ready/merged.zip
+          git commit -m "Added merged SQLite ZIP from scanning.xlsx and prices.xlsx"
+
+          git push
