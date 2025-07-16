@@ -35,6 +35,7 @@ jobs:
           import sqlite3
           import zipfile
           import os
+          import math
 
           scan_file = "conversation/csv/scanning.xlsx"
           price_file = "conversation/csv/prices.xlsx"
@@ -43,9 +44,18 @@ jobs:
           price_df = pd.read_excel(price_file)
 
           # Ensure only Barcode and OriginalPrice columns are used from prices.xlsx
+          # And convert OriginalPrice to numeric, coercing errors will turn non-numeric into NaN
+          price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
           price_df = price_df[["Barcode", "OriginalPrice"]]
 
           merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
+
+          # Process OriginalPrice column:
+          # 1. Convert to integer if it's a whole number, otherwise keep as is for non-whole numbers
+          # 2. Convert NaN values to empty strings
+          merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(
+              lambda x: str(int(x)) if pd.notna(x) and x == int(x) else ('' if pd.isna(x) else str(x))
+          )
 
           # Keep only relevant columns from scanning and merged OriginalPrice
           final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
@@ -53,7 +63,8 @@ jobs:
 
           db_name = "merged.db"
           conn = sqlite3.connect(db_name)
-          merged_df.to_sql("sc", conn, if_exists="replace", index=False)
+          # Use dtype to ensure OriginalPrice is stored as TEXT in SQLite
+          merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
 
           conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
           conn.execute("INSERT INTO databaseversion (DBversion) VALUES ('merged')")
@@ -75,5 +86,5 @@ jobs:
           git config user.email "actions@github.com"
           git add conversation/Ready/merged.zip
           git commit -m "Added merged SQLite ZIP from scanning.xlsx and prices.xlsx"
-
+          
           git push
