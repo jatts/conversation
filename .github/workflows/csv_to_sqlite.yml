@@ -1,66 +1,79 @@
-name: CSV to SQLite Converter with ZIP Compression and Clean DBversion
+name: Merge scanning.xlsx + prices.xlsx → SQLite with ZIP
 
-on:
-  push:
-    paths:
-      - 'conversation/csv/*.csv'
+on: push: paths: - 'conversation/csv/scanning.xlsx' - 'conversation/csv/prices.xlsx'
 
-jobs:
-  convert_and_zip_sqlite:
-    runs-on: ubuntu-latest
+jobs: merge_and_convert_excel: runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v3
+steps:
+  - uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
+  - name: Check both files changed together
+    run: |
+      changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+      scanning_changed=$(echo "$changed_files" | grep "conversation/csv/scanning.xlsx" || true)
+      prices_changed=$(echo "$changed_files" | grep "conversation/csv/prices.xlsx" || true)
 
-      - name: Install Tools
-        run: pip install pandas sqlite-utils
+      if [ -n "$scanning_changed" ] && [ -n "$prices_changed" ]; then
+        echo "✅ Both files updated. Proceeding..."
+      else
+        echo "❌ Both scanning.xlsx and prices.xlsx must be updated together!"
+        exit 1
+      fi
 
-      - name: Find Latest CSV File
-        id: findfile
-        run: |
-          latest_file=$(ls -t conversation/csv/*.csv | head -1)
-          echo "file=$latest_file" >> $GITHUB_OUTPUT
+  - name: Set up Python
+    uses: actions/setup-python@v4
+    with:
+      python-version: '3.x'
 
-      - name: Convert CSV to SQLite + Add Version Table (Clean DBversion)
-        run: |
-          csv_file="${{ steps.findfile.outputs.file }}"
-          db_name=$(basename "$csv_file" .csv).db
+  - name: Install Required Python Packages
+    run: pip install pandas openpyxl sqlite-utils
 
-          # Create SQLite DB with lightweight settings
-          sqlite3 "$db_name" 'PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;'
+  - name: Merge XLSX Files and Create SQLite
+    run: |
+      python3 <<EOF
+      import pandas as pd
+      import sqlite3
+      import zipfile
+      import os
 
-          # Insert CSV into 'sc'
-          sqlite-utils insert "$db_name" sc "$csv_file" --csv --detect-types
+      scan_file = "conversation/csv/scanning.xlsx"
+      price_file = "conversation/csv/prices.xlsx"
 
-          # Prepare version table WITHOUT .csv extension
-          version_name=$(basename "$csv_file" .csv)
-          echo "DBversion" > version.csv
-          echo "$version_name" >> version.csv
-          sqlite-utils insert "$db_name" databaseversion version.csv --csv
+      # Load both Excel files
+      scan_df = pd.read_excel(scan_file)
+      price_df = pd.read_excel(price_file)
 
-          # Shrink DB size
-          sqlite3 "$db_name" 'VACUUM;'
+      # Merge on 'Barcode'
+      merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
 
-      - name: Compress SQLite DB as ZIP
-        run: |
-          db_name=$(basename "${{ steps.findfile.outputs.file }}" .csv).db
-          zip_name=$(basename "$db_name" .db).zip
+      # Create SQLite database
+      db_name = "merged.db"
+      conn = sqlite3.connect(db_name)
+      merged_df.to_sql("sc", conn, if_exists="replace", index=False)
 
-          mkdir -p conversation/Ready
-          zip -j "conversation/Ready/$zip_name" "$db_name"
+      # Add databaseversion table
+      conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
+      conn.execute("INSERT INTO databaseversion (DBversion) VALUES ('merged')")
+      conn.commit()
+      conn.execute("VACUUM;")
+      conn.close()
 
-          # Remove uncompressed DB
-          rm "$db_name"
+      # Prepare Ready folder
+      os.makedirs("conversation/Ready", exist_ok=True)
 
-      - name: Commit Zipped SQLite DB
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add conversation/Ready/*.zip
-          git commit -m "Added compressed SQLite ZIP DB without .csv in version"
-          git push
+      # Zip the database file
+      with zipfile.ZipFile("conversation/Ready/merged.zip", 'w', zipfile.ZIP_DEFLATED) as zipf:
+          zipf.write(db_name)
+
+      # Clean up temp files
+      os.remove(db_name)
+      EOF
+
+  - name: Commit Merged ZIP DB
+    run: |
+      git config user.name "github-actions"
+      git config user.email "actions@github.com"
+      git add conversation/Ready/merged.zip
+      git commit -m "Added merged SQLite ZIP from scanning.xlsx + prices.xlsx
+      "
+      git push
