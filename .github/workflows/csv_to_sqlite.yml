@@ -1,13 +1,17 @@
-name: Merge scanning.xlsx + prices.xlsx to SQLite with ZIP
+name: Full Workflow - Merge Excel to SQLite ZIP
 
 on:
   push:
     paths:
+      # This workflow will be triggered if either of these files are pushed
       - 'conversation/csv/scanning.xlsx'
       - 'conversation/csv/prices.xlsx'
+      # Also trigger if version.txt is pushed (though Phase 1 will usually update it)
+      - 'conversation/Temp/version.txt'
 
 jobs:
-  merge_and_convert_excel:
+  # PHASE 1: Merge scanning.xlsx + prices.xlsx to Temp SQLite
+  merge_and_prepare_temp_db:
     runs-on: ubuntu-latest
 
     steps:
@@ -28,78 +32,175 @@ jobs:
       - name: Install Required Python Packages
         run: pip install pandas openpyxl sqlite-utils
 
-      - name: Merge XLSX Files and Create SQLite + Version and Log Files with Error Handling
+      - name: Merge XLSX Files and Create Temp SQLite + Log Files
         run: |
           python3 <<EOF
           import pandas as pd
           import sqlite3
-          import zipfile
           import os
           from datetime import datetime
+          import traceback
 
           try:
               scan_file = "conversation/csv/scanning.xlsx"
               price_file = "conversation/csv/prices.xlsx"
 
-              os.makedirs("conversation/Ready", exist_ok=True)
-              log_path = "conversation/Ready/conversion_log.txt"
+              os.makedirs("conversation/Temp", exist_ok=True)
+              log_path = "conversation/Temp/conversion_log.txt"
+
               with open(log_path, "w") as logfile:
-                  now = datetime.now().strftime("[%H:%M:%S]")
-                  logfile.write(f"{now} Files received. Starting conversion process...\n")
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 1: Files received. Starting merge...\n")
 
               scan_df = pd.read_excel(scan_file)
               price_df = pd.read_excel(price_file)
 
-              with open(log_path, "a") as logfile:
-                  now = datetime.now().strftime("[%H:%M:%S]")
-                  logfile.write(f"{now} Merging files...\n")
-
               price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
               price_df = price_df[["Barcode", "OriginalPrice"]]
+
               merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
+
               merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(
                   lambda x: str(int(x)) if pd.notna(x) and x == int(x) else ('' if pd.isna(x) else str(x))
               )
+
               final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
               merged_df = merged_df[final_columns]
 
-              version_name = os.path.splitext(os.path.basename(scan_file))[0]
-              db_name = f"{version_name}.db"
+              db_name = "conversation/Temp/temp.db"
               conn = sqlite3.connect(db_name)
               merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
-              conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
-              conn.execute(f"INSERT INTO databaseversion (DBversion) VALUES ('{version_name}')")
               conn.commit()
               conn.execute("VACUUM;")
               conn.close()
 
               with open(log_path, "a") as logfile:
-                  now = datetime.now().strftime("[%H:%M:%S]")
-                  logfile.write(f"{now} SQLite database created. Preparing version info...\n")
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 1: Temp SQLite created. Proceeding to next phase.\n")
 
-              zip_name = f"{version_name}.zip"
-              with zipfile.ZipFile(f"conversation/Ready/{zip_name}", 'w', zipfile.ZIP_DEFLATED) as zipf:
-                  zipf.write(db_name)
-
-              with open("conversation/Ready/version.txt", "w") as vfile:
+              # Generate a default version.txt here if one isn't pushed manually
+              # This ensures Phase 2 always has a version.txt to work with
+              version_name = os.path.splitext(os.path.basename(scan_file))[0]
+              with open("conversation/Temp/version.txt", "w") as vfile:
                   vfile.write(version_name + "\n")
-
+              
               with open(log_path, "a") as logfile:
-                  now = datetime.now().strftime("[%H:%M:%S]")
-                  logfile.write(f"{now} Conversion complete.\n")
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 1: Default version.txt created: {version_name}\n")
 
-              os.remove(db_name)
           except Exception as e:
-              with open("conversation/Ready/conversion_log.txt", "a") as logfile:
-                  now = datetime.now().strftime("[%H:%M:%S]")
-                  logfile.write(f"{now} Error occurred: {str(e)}\n")
-              raise e
+              os.makedirs("conversation/Temp", exist_ok=True)
+              log_path_error = "conversation/Temp/conversion_log.txt"
+              with open(log_path_error, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 1: Error occurred: {str(e)}\n")
+                  logfile.write(traceback.format_exc())
+              raise
+
           EOF
 
-      - name: Commit Merged ZIP DB and Log Files
+      - name: Upload Temp Files for Next Job
+        uses: actions/upload-artifact@v3
+        with:
+          name: temp-merge-artifacts
+          path: |
+            conversation/Temp/temp.db
+            conversation/Temp/conversion_log.txt
+            conversation/Temp/version.txt
+          retention-days: 1 # You can adjust retention as needed
+
+  # PHASE 2: Finalize SQLite ZIP
+  finalize_db_with_version:
+    needs: merge_and_prepare_temp_db # This ensures Phase 2 runs only after Phase 1 succeeds
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download Temp Files from Previous Job
+        uses: actions/download-artifact@v3
+        with:
+          name: temp-merge-artifacts
+          path: conversation/Temp/ # Download to the same expected path
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Required Python Packages
+        run: pip install sqlite-utils
+
+      - name: Rename Temp DB, Zip It, Update Logs
+        run: |
+          python3 <<EOF
+          import sqlite3
+          import zipfile
+          import os
+          from datetime import datetime
+          import traceback
+
+          try:
+              version_path = "conversation/Temp/version.txt"
+              if not os.path.exists(version_path):
+                  raise FileNotFoundError(f"version.txt not found at {version_path}. This workflow requires it from the previous job.")
+
+              with open(version_path, "r") as vfile:
+                  version_name = vfile.read().strip()
+
+              db_source = "conversation/Temp/temp.db"
+              if not os.path.exists(db_source):
+                  raise FileNotFoundError(f"temp.db not found at {db_source}. It should have been uploaded by the previous job.")
+
+              os.makedirs("conversation/Ready", exist_ok=True) # Ensure the target directory for the final DB exists
+              db_target = f"conversation/Ready/{version_name}.db"
+
+              os.rename(db_source, db_target)
+
+              with sqlite3.connect(db_target) as conn:
+                  conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
+                  conn.execute("DELETE FROM databaseversion") # Clear previous if any
+                  conn.execute("INSERT INTO databaseversion (DBversion) VALUES (?)", (version_name,))
+                  conn.commit()
+                  conn.execute("VACUUM;")
+
+              zip_name = f"conversation/Ready/{version_name}.zip"
+              with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                  zipf.write(db_target, os.path.basename(db_target))
+
+              log_path = "conversation/Temp/conversion_log.txt" # Continue logging to the same file
+              with open(log_path, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 2: Finalizing with version: {version_name}\n")
+                  logfile.write(f"{now} Phase 2: Finalized DB: {db_target}, Zipped to: {zip_name}\n")
+                  logfile.write(f"{now} Phase 2: Conversion Complete\n")
+
+          except Exception as e:
+              os.makedirs("conversation/Temp", exist_ok=True) # Ensure log directory exists
+              log_path_error = "conversation/Temp/conversion_log.txt"
+              with open(log_path_error, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 2: Error occurred during finalization: {str(e)}\n")
+                  logfile.write(traceback.format_exc())
+              raise
+          EOF
+
+      - name: Commit Finalized Files and Clean Temp
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add conversation/Ready/*.zip conversation/Ready/version.txt conversation/Ready/conversion_log.txt
-          git commit -m "Added merged SQLite ZIP and log/version files with error handling"
+          
+          # Add the output files
+          git add conversation/Ready/*.db conversation/Ready/*.zip
+          # Add the updated log file
+          git add conversation/Temp/conversion_log.txt conversation/Temp/version.txt
+          
+          # Remove the temporary files from the repository
+          # These commands are run from the root of the repo, so paths are relative to root.
+          git rm conversation/Temp/temp.db || true # || true prevents error if file somehow doesn't exist
+          # git rm conversation/Temp/version.txt # Keep version.txt in repo as it's a trigger for Phase 2, if it were separate.
+          # git rm conversation/Temp/conversion_log.txt # Keeping this for commit
+          
+          git commit -m "Workflow complete: Merged Excel, finalized SQLite ZIP, and updated logs"
           git push
+
