@@ -1,104 +1,116 @@
 name: Merge scanning.xlsx + prices.xlsx to SQLite with ZIP
 
-on: 
-push: 
-paths: 
-- 'conversation/csv/scanning.xlsx' 
-- 'conversation/csv/prices.xlsx'
+on:
+  push:
+    paths:
+      - 'conversation/csv/scanning.xlsx'
+      - 'conversation/csv/prices.xlsx'
 
-jobs: merge_and_convert_excel: runs-on: ubuntu-latest
+jobs:
+  merge_and_convert_excel:
+    runs-on: ubuntu-latest
 
-steps:
-  - uses: actions/checkout@v3
+    steps:
+      - uses: actions/checkout@v3
 
-  - name: Check if both files exist
-    run: |
-      if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
-        echo "Both scanning.xlsx and prices.xlsx must exist in the repository!"
-        exit 1
-      fi
+      - name: Check if both files exist
+        run: |
+          if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
+            echo "Both scanning.xlsx and prices.xlsx must exist in the repository!"
+            exit 1
+          fi
 
-  - name: Set up Python
-    uses: actions/setup-python@v4
-    with:
-      python-version: '3.x'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
 
-  - name: Install Required Python Packages
-    run: pip install pandas openpyxl sqlite-utils
+      - name: Install Required Python Packages
+        run: pip install pandas openpyxl sqlite-utils
 
-  - name: Merge XLSX Files and Create SQLite + Version and Log Files with Error Handling
-    run: |
-      python3 <<EOF
-      import pandas as pd
-      import sqlite3
-      import zipfile
-      import os
-      from datetime import datetime
+      - name: Merge XLSX Files and Create SQLite + Version and Log Files with Error Handling
+        run: |
+          python3 <<EOF
+          import pandas as pd
+          import sqlite3
+          import zipfile
+          import os
+          from datetime import datetime
 
-      try:
-          scan_file = "conversation/csv/scanning.xlsx"
-          price_file = "conversation/csv/prices.xlsx"
+          try:
+              scan_file = "conversation/csv/scanning.xlsx"
+              price_file = "conversation/csv/prices.xlsx"
 
-          os.makedirs("conversation/Ready", exist_ok=True)
-          log_path = "conversation/Ready/conversion_log.txt"
-          with open(log_path, "w") as logfile:
-              now = datetime.now().strftime("[%H:%M:%S]")
-              logfile.write(f"{now} Files received. Starting conversion process...\n")
+              os.makedirs("conversation/Ready", exist_ok=True)
+              log_path = "conversation/Ready/conversion_log.txt"
+              with open(log_path, "w") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]") # Added YYYY-MM-DD for better logs
+                  logfile.write(f"{now} Files received. Starting conversion process...\n")
 
-          scan_df = pd.read_excel(scan_file)
-          price_df = pd.read_excel(price_file)
+              scan_df = pd.read_excel(scan_file)
+              price_df = pd.read_excel(price_file)
 
-          with open(log_path, "a") as logfile:
-              now = datetime.now().strftime("[%H:%M:%S]")
-              logfile.write(f"{now} Merging files...\n")
+              with open(log_path, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Merging files...\n")
 
-          price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
-          price_df = price_df[["Barcode", "OriginalPrice"]]
-          merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
-          merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(
-              lambda x: str(int(x)) if pd.notna(x) and x == int(x) else ('' if pd.isna(x) else str(x))
-          )
-          final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
-          merged_df = merged_df[final_columns]
+              price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
+              price_df = price_df[["Barcode", "OriginalPrice"]]
+              merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
+              merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(
+                  lambda x: str(int(x)) if pd.notna(x) and x == int(x) else ('' if pd.isna(x) else str(x))
+              )
+              final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
+              merged_df = merged_df[final_columns]
 
-          version_name = os.path.splitext(os.path.basename(scan_file))[0]
-          db_name = f"{version_name}.db"
-          conn = sqlite3.connect(db_name)
-          merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
-          conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
-          conn.execute(f"INSERT INTO databaseversion (DBversion) VALUES ('{version_name}')")
-          conn.commit()
-          conn.execute("VACUUM;")
-          conn.close()
+              # Use the filename of scanning.xlsx (without extension) as the version name
+              version_name = os.path.splitext(os.path.basename(scan_file))[0]
+              db_name = f"{version_name}.db" # Use version_name for the DB file name
+              conn = sqlite3.connect(db_name)
+              merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
+              conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
+              conn.execute(f"INSERT INTO databaseversion (DBversion) VALUES ('{version_name}')")
+              conn.commit()
+              conn.execute("VACUUM;")
+              conn.close()
 
-          with open(log_path, "a") as logfile:
-              now = datetime.now().strftime("[%H:%M:%S]")
-              logfile.write(f"{now} SQLite database created. Preparing version info...\n")
+              with open(log_path, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} SQLite database '{db_name}' created. Preparing version info...\n")
 
-          zip_name = f"{version_name}.zip"
-          with zipfile.ZipFile(f"conversation/Ready/{zip_name}", 'w', zipfile.ZIP_DEFLATED) as zipf:
-              zipf.write(db_name)
+              zip_name = f"{version_name}.zip" # Use version_name for the ZIP file name
+              with zipfile.ZipFile(f"conversation/Ready/{zip_name}", 'w', zipfile.ZIP_DEFLATED) as zipf:
+                  zipf.write(db_name)
 
-          with open("conversation/Ready/version.txt", "w") as vfile:
-              vfile.write(version_name + "\n")
+              # Write the version name to a version.txt file
+              with open("conversation/Ready/version.txt", "w") as vfile:
+                  vfile.write(version_name + "\n")
 
-          with open(log_path, "a") as logfile:
-              now = datetime.now().strftime("[%H:%M:%S]")
-              logfile.write(f"{now} Conversion complete.\n")
+              with open(log_path, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Conversion complete. Output: {zip_name}, version.txt, conversion_log.txt\n")
 
-          os.remove(db_name)
-      except Exception as e:
-          with open("conversation/Ready/conversion_log.txt", "a") as logfile:
-              now = datetime.now().strftime("[%H:%M:%S]")
-              logfile.write(f"{now} Error occurred: {str(e)}\n")
-          raise e
-      EOF
+              os.remove(db_name) # Clean up the .db file after zipping
+          except Exception as e:
+              # Ensure the log file path is consistent for error logging
+              # And ensure the directory exists before trying to write the log
+              os.makedirs("conversation/Ready", exist_ok=True)
+              log_path_error = "conversation/Ready/conversion_log.txt" # Define log_path_error specifically for the except block
+              with open(log_path_error, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Error occurred: {str(e)}\n")
+                  import traceback
+                  logfile.write(traceback.format_exc()) # Write full traceback for better debugging
+              # Re-raise the exception so the GitHub Action fails
+              raise
+          EOF
 
   - name: Commit Merged ZIP DB and Log Files
     run: |
       git config user.name "github-actions"
       git config user.email "actions@github.com"
+      # Add all generated files
       git add conversation/Ready/*.zip conversation/Ready/version.txt conversation/Ready/conversion_log.txt
-      git commit -m "Added merged SQLite ZIP and log/version files with error handli
-      ng"
+      git commit -m "Added merged SQLite ZIP, log, and version files with error handling"
       git push
+      
