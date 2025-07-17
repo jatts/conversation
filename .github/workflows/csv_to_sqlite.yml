@@ -44,14 +44,14 @@ jobs:
               os.makedirs("conversation/Ready", exist_ok=True)
               log_path = "conversation/Ready/conversion_log.txt"
               with open(log_path, "w") as logfile:
-                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  now = datetime.now().strftime("[%H:%M:%S]")
                   logfile.write(f"{now} Files received. Starting conversion process...\n")
 
               scan_df = pd.read_excel(scan_file)
               price_df = pd.read_excel(price_file)
 
               with open(log_path, "a") as logfile:
-                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  now = datetime.now().strftime("[%H:%M:%S]")
                   logfile.write(f"{now} Merging files...\n")
 
               price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
@@ -74,8 +74,8 @@ jobs:
               conn.close()
 
               with open(log_path, "a") as logfile:
-                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} SQLite database '{db_name}' created. Preparing version info...\n")
+                  now = datetime.now().strftime("[%H:%M:%S]")
+                  logfile.write(f"{now} SQLite database created. Preparing version info...\n")
 
               zip_name = f"{version_name}.zip"
               with zipfile.ZipFile(f"conversation/Ready/{zip_name}", 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -85,19 +85,15 @@ jobs:
                   vfile.write(version_name + "\n")
 
               with open(log_path, "a") as logfile:
-                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Conversion complete. Output: {zip_name}, version.txt, conversion_log.txt\n")
+                  now = datetime.now().strftime("[%H:%M:%S]")
+                  logfile.write(f"{now} Conversion complete.\n")
 
               os.remove(db_name)
           except Exception as e:
-              os.makedirs("conversation/Ready", exist_ok=True)
-              log_path_error = "conversation/Ready/conversion_log.txt"
-              with open(log_path_error, "a") as logfile:
-                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+              with open("conversation/Ready/conversion_log.txt", "a") as logfile:
+                  now = datetime.now().strftime("[%H:%M:%S]")
                   logfile.write(f"{now} Error occurred: {str(e)}\n")
-                  import traceback
-                  logfile.write(traceback.format_exc())
-              raise
+              raise e
           EOF
 
       - name: Commit Merged ZIP DB and Log Files
@@ -105,5 +101,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Ready/*.zip conversation/Ready/version.txt conversation/Ready/conversion_log.txt
-          git commit -m "Added merged SQLite ZIP, log, and version files with error handling"
+          git commit -m "Added merged SQLite ZIP and log/version files with error handling"
           git push
