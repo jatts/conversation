@@ -1,7 +1,8 @@
 name: Merge scanning.xlsx + prices.xlsx to SQLite with ZIP
 
 on: 
-push: paths: 
+push: 
+paths: 
 - 'conversation/csv/scanning.xlsx' 
 - 'conversation/csv/prices.xlsx'
 
