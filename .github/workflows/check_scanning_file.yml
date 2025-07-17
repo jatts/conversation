@@ -1,3 +1,6 @@
+# .github/workflows/check_scanning_file.yml
+name: Check Scanning File Upload
+
 on:
   push:
     paths:
@@ -12,32 +15,31 @@ jobs:
       - name: Mark scanning.xlsx as uploaded
         run: |
           mkdir -p conversation/Temp # Ensure directory exists
-          # Read existing content, add/update 'scanning_uploaded', write back
           TEMP_FILE="conversation/Temp/upload_temp.txt"
-          
-          # Read current state if file exists, otherwise start empty
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S") # Get current timestamp
+
+          # Read existing content, update or add 'scanning_uploaded' with timestamp
           if [ -f "$TEMP_FILE" ]; then
             CONTENT=$(cat "$TEMP_FILE")
           else
             CONTENT=""
           fi
           
-          # Use awk to update or add the 'scanning_uploaded' status
-          # If 'scanning_uploaded' exists, update its value. Else, append it.
-          if echo "$CONTENT" | grep -q "scanning_uploaded:"; then
-            NEW_CONTENT=$(echo "$CONTENT" | awk -v RS="" '{gsub(/scanning_uploaded:[^[:space:]]*/, "scanning_uploaded:true"); print}')
-          else
-            NEW_CONTENT="${CONTENT}\nscanning_uploaded:true"
-          fi
+          # Remove any existing scanning_uploaded line to avoid duplicates
+          CLEANED_CONTENT=$(echo "$CONTENT" | grep -v "scanning_uploaded:")
           
-          echo -e "$NEW_CONTENT" > "$TEMP_FILE"
+          # Add the new scanning_uploaded line with timestamp
+          NEW_CONTENT="${CLEANED_CONTENT}\nscanning_uploaded:true_${TIMESTAMP}"
           
-          echo "Scanning file status marked in $TEMP_FILE"
+          # Remove leading/trailing newlines and write to file
+          echo -e "$NEW_CONTENT" | sed '/^$/d' > "$TEMP_FILE"
+          
+          echo "Scanning file status marked in $TEMP_FILE with timestamp."
 
       - name: Commit upload_temp.txt changes
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Temp/upload_temp.txt
-          git commit -m "Marked scanning.xlsx as uploaded" || echo "No changes to commit for scanning.xlsx status."
+          git commit -m "Marked scanning.xlsx as uploaded with timestamp." || echo "No changes to commit for scanning.xlsx status."
           git push
