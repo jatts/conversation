@@ -1,3 +1,6 @@
+# .github/workflows/check_prices_file.yml
+name: Check Prices File Upload
+
 on:
   push:
     paths:
@@ -12,29 +15,31 @@ jobs:
       - name: Mark prices.xlsx as uploaded
         run: |
           mkdir -p conversation/Temp # Ensure directory exists
-          # Read existing content, add/update 'prices_uploaded', write back
           TEMP_FILE="conversation/Temp/upload_temp.txt"
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S") # Get current timestamp
 
+          # Read existing content, update or add 'prices_uploaded' with timestamp
           if [ -f "$TEMP_FILE" ]; then
             CONTENT=$(cat "$TEMP_FILE")
           else
             CONTENT=""
           fi
           
-          if echo "$CONTENT" | grep -q "prices_uploaded:"; then
-            NEW_CONTENT=$(echo "$CONTENT" | awk -v RS="" '{gsub(/prices_uploaded:[^[:space:]]*/, "prices_uploaded:true"); print}')
-          else
-            NEW_CONTENT="${CONTENT}\nprices_uploaded:true"
-          fi
+          # Remove any existing prices_uploaded line to avoid duplicates
+          CLEANED_CONTENT=$(echo "$CONTENT" | grep -v "prices_uploaded:")
           
-          echo -e "$NEW_CONTENT" > "$TEMP_FILE"
+          # Add the new prices_uploaded line with timestamp
+          NEW_CONTENT="${CLEANED_CONTENT}\nprices_uploaded:true_${TIMESTAMP}"
           
-          echo "Prices file status marked in $TEMP_FILE"
+          # Remove leading/trailing newlines and write to file
+          echo -e "$NEW_CONTENT" | sed '/^$/d' > "$TEMP_FILE"
+          
+          echo "Prices file status marked in $TEMP_FILE with timestamp."
 
       - name: Commit upload_temp.txt changes
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Temp/upload_temp.txt
-          git commit -m "Marked prices.xlsx as uploaded" || echo "No changes to commit for prices.xlsx status."
+          git commit -m "Marked prices.xlsx as uploaded with timestamp." || echo "No changes to commit for prices.xlsx status."
           git push
