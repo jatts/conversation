@@ -84,15 +84,47 @@ jobs:
               print(f"Status for {file_type} updated successfully in {status_file_path}.", file=sys.stderr)
           except Exception as e:
               print(f"ERROR: Could not write to status file: {e}", file=sys.stderr)
-              # If writing fails, we should make the job fail to indicate a problem
-              sys.exit(1)
+              sys.exit(1) # Fail the job if writing fails
           
           EOF
 
-      - name: Commit file_ready_status.txt changes
+      - name: Verify file content locally
+        run: |
+          echo "--- Content of file_ready_status.txt before commit ---"
+          cat conversation/Temp/file_ready_status.txt
+          echo "----------------------------------------------------"
+          if [ ! -s conversation/Temp/file_ready_status.txt ]; then
+            echo "Error: file_ready_status.txt is empty or does not exist after Python script."
+            exit 1
+          fi
+
+      - name: Commit file_ready_status.txt changes and push
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+          
+          # Stage the file
           git add conversation/Temp/file_ready_status.txt
-          git commit -m "Updated file ready status for ${{ steps.get_file_type.outputs.file_type }}" || echo "No status change to commit."
-          git push
+          
+          # Check if there are any changes to commit
+          if git diff --cached --exit-code --quiet; then
+            echo "No changes detected for file_ready_status.txt, skipping commit/push."
+          else
+            # Try to commit, if it fails, maybe there's already a pending commit
+            # Use 'git commit -m ... || true' to allow job to continue even if commit fails due to no changes
+            git commit -m "Updated file ready status for ${{ steps.get_file_type.outputs.file_type }} with timestamp." || echo "Commit failed, possibly no changes."
+            
+            # Check if previous commit was empty and amend if needed
+            if [ "$(git log -1 --pretty=format:%B | grep "Updated file ready status for")" ]; then
+              if git diff --cached --exit-code --quiet; then
+                 echo "Previous commit was empty, will try to amend."
+                 git commit --amend --no-edit || echo "Could not amend, maybe no changes after all."
+              fi
+            fi
+
+            # Push the changes. --force-with-lease is safer than --force
+            echo "Attempting to push changes to branch: ${{ github.ref }}"
+            git push origin HEAD:"${{ github.ref }}" || echo "Push failed, retrying with force-with-lease."
+            git push --force-with-lease origin HEAD:"${{ github.ref }}" || { echo "Final push attempt failed. Please check repository history."; exit 1; }
+            echo "Changes pushed successfully."
+          fi
