@@ -1,90 +1,100 @@
 name: Merge scanning.xlsx + prices.xlsx to SQLite with ZIP
 
-on:
-  push:
-    paths:
-      - 'conversation/csv/scanning.xlsx'
-      - 'conversation/csv/prices.xlsx'
+on: push: paths: - 'conversation/csv/scanning.xlsx' - 'conversation/csv/prices.xlsx'
 
-jobs:
-  merge_and_convert_excel:
-    runs-on: ubuntu-latest
+jobs: merge_and_convert_excel: runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v3
+steps:
+  - uses: actions/checkout@v3
 
-      - name: Check if both files exist
-        run: |
-          if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
-            echo "Both scanning.xlsx and prices.xlsx must exist in the repository!"
-            exit 1
-          fi
+  - name: Check if both files exist
+    run: |
+      if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
+        echo "Both scanning.xlsx and prices.xlsx must exist in the repository!"
+        exit 1
+      fi
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
+  - name: Set up Python
+    uses: actions/setup-python@v4
+    with:
+      python-version: '3.x'
 
-      - name: Install Required Python Packages
-        run: pip install pandas openpyxl sqlite-utils
+  - name: Install Required Python Packages
+    run: pip install pandas openpyxl sqlite-utils
 
-      - name: Merge XLSX Files and Create SQLite
-        run: |
-          python3 <<EOF
-          import pandas as pd
-          import sqlite3
-          import zipfile
-          import os
-          import math
+  - name: Merge XLSX Files and Create SQLite + Version and Log Files with Error Handling
+    run: |
+      python3 <<EOF
+      import pandas as pd
+      import sqlite3
+      import zipfile
+      import os
+      from datetime import datetime
 
+      try:
           scan_file = "conversation/csv/scanning.xlsx"
           price_file = "conversation/csv/prices.xlsx"
+
+          os.makedirs("conversation/Ready", exist_ok=True)
+          log_path = "conversation/Ready/conversion_log.txt"
+          with open(log_path, "w") as logfile:
+              now = datetime.now().strftime("[%H:%M:%S]")
+              logfile.write(f"{now} Files received. Starting conversion process...\n")
 
           scan_df = pd.read_excel(scan_file)
           price_df = pd.read_excel(price_file)
 
-          # Ensure only Barcode and OriginalPrice columns are used from prices.xlsx
-          # And convert OriginalPrice to numeric, coercing errors will turn non-numeric into NaN
+          with open(log_path, "a") as logfile:
+              now = datetime.now().strftime("[%H:%M:%S]")
+              logfile.write(f"{now} Merging files...\n")
+
           price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
           price_df = price_df[["Barcode", "OriginalPrice"]]
-
           merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
-
-          # Process OriginalPrice column:
-          # 1. Convert to integer if it's a whole number, otherwise keep as is for non-whole numbers
-          # 2. Convert NaN values to empty strings
           merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(
               lambda x: str(int(x)) if pd.notna(x) and x == int(x) else ('' if pd.isna(x) else str(x))
           )
-
-          # Keep only relevant columns from scanning and merged OriginalPrice
           final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
           merged_df = merged_df[final_columns]
 
-          db_name = "merged.db"
+          version_name = os.path.splitext(os.path.basename(scan_file))[0]
+          db_name = f"{version_name}.db"
           conn = sqlite3.connect(db_name)
-          # Use dtype to ensure OriginalPrice is stored as TEXT in SQLite
           merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
-
           conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
-          conn.execute("INSERT INTO databaseversion (DBversion) VALUES ('merged')")
+          conn.execute(f"INSERT INTO databaseversion (DBversion) VALUES ('{version_name}')")
           conn.commit()
           conn.execute("VACUUM;")
           conn.close()
 
-          os.makedirs("conversation/Ready", exist_ok=True)
+          with open(log_path, "a") as logfile:
+              now = datetime.now().strftime("[%H:%M:%S]")
+              logfile.write(f"{now} SQLite database created. Preparing version info...\n")
 
-          with zipfile.ZipFile("conversation/Ready/merged.zip", 'w', zipfile.ZIP_DEFLATED) as zipf:
+          zip_name = f"{version_name}.zip"
+          with zipfile.ZipFile(f"conversation/Ready/{zip_name}", 'w', zipfile.ZIP_DEFLATED) as zipf:
               zipf.write(db_name)
 
-          os.remove(db_name)
-          EOF
+          with open("conversation/Ready/version.txt", "w") as vfile:
+              vfile.write(version_name + "\n")
 
-      - name: Commit Merged ZIP DB
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add conversation/Ready/merged.zip
-          git commit -m "Added merged SQLite ZIP from scanning.xlsx and prices.xlsx"
-          
-          git push
+          with open(log_path, "a") as logfile:
+              now = datetime.now().strftime("[%H:%M:%S]")
+              logfile.write(f"{now} Conversion complete.\n")
+
+          os.remove(db_name)
+      except Exception as e:
+          with open("conversation/Ready/conversion_log.txt", "a") as logfile:
+              now = datetime.now().strftime("[%H:%M:%S]")
+              logfile.write(f"{now} Error occurred: {str(e)}\n")
+          raise e
+      EOF
+
+  - name: Commit Merged ZIP DB and Log Files
+    run: |
+      git config user.name "github-actions"
+      git config user.email "actions@github.com"
+      git add conversation/Ready/*.zip conversation/Ready/version.txt conversation/Ready/conversion_log.txt
+      git commit -m "Added merged SQLite ZIP and log/version files with error handli
+      ng"
+      git push
