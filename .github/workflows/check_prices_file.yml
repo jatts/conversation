@@ -1,0 +1,40 @@
+on:
+  push:
+    paths:
+      - 'conversation/csv/prices.xlsx' # Triggers only when prices.xlsx is pushed
+
+jobs:
+  check_and_mark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Mark prices.xlsx as uploaded
+        run: |
+          mkdir -p conversation/Temp # Ensure directory exists
+          # Read existing content, add/update 'prices_uploaded', write back
+          TEMP_FILE="conversation/Temp/upload_temp.txt"
+
+          if [ -f "$TEMP_FILE" ]; then
+            CONTENT=$(cat "$TEMP_FILE")
+          else
+            CONTENT=""
+          fi
+          
+          if echo "$CONTENT" | grep -q "prices_uploaded:"; then
+            NEW_CONTENT=$(echo "$CONTENT" | awk -v RS="" '{gsub(/prices_uploaded:[^[:space:]]*/, "prices_uploaded:true"); print}')
+          else
+            NEW_CONTENT="${CONTENT}\nprices_uploaded:true"
+          fi
+          
+          echo -e "$NEW_CONTENT" > "$TEMP_FILE"
+          
+          echo "Prices file status marked in $TEMP_FILE"
+
+      - name: Commit upload_temp.txt changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add conversation/Temp/upload_temp.txt
+          git commit -m "Marked prices.xlsx as uploaded" || echo "No changes to commit for prices.xlsx status."
+          git push
