@@ -1,5 +1,2 @@
-[2025-07-17 13:07:05] Phase 1: Files received. Starting merge...
-[2025-07-17 13:07:06] Phase 1: Temp SQLite created at conversation/Temp/temp.db.
-[2025-07-17 13:08:25] Phase 2: Finalizing with version: 2025-0003
-[2025-07-17 13:08:25] Phase 2: Finalized DB: conversation/Ready/2025-0003.db, Zipped to: conversation/Ready/2025-0003.zip
-[2025-07-17 13:08:25] Phase 2: Conversion Complete
+[2025-07-17 13:19:33] Phase 1: Files received. Starting merge...
+[2025-07-17 13:19:33] Phase 1: Temp SQLite created at conversation/Temp/temp.db.
