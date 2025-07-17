@@ -1,6 +1,9 @@
 name: Merge scanning.xlsx + prices.xlsx to SQLite with ZIP
 
-on: push: paths: - 'conversation/csv/scanning.xlsx' - 'conversation/csv/prices.xlsx'
+on: 
+push: paths: 
+- 'conversation/csv/scanning.xlsx' 
+- 'conversation/csv/prices.xlsx'
 
 jobs: merge_and_convert_excel: runs-on: ubuntu-latest
 
