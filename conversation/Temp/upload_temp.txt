@@ -1,1 +1,2 @@
 prices_uploaded:true_20250717_205108
+scanning_uploaded:true_20250717_205134
