@@ -1,0 +1,96 @@
+# .github/workflows/phase1_excel_to_temp_db.yml
+name: Phase 1 - Merge Excel to Temp SQLite
+
+on:
+  push:
+    paths:
+      - 'conversation/csv/scanning.xlsx'
+      - 'conversation/csv/prices.xlsx'
+
+jobs:
+  merge_and_prepare_temp_db:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Check if both files exist
+        run: |
+          if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
+            echo "Both scanning.xlsx and prices.xlsx must exist in the repository!"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Required Python Packages
+        run: pip install pandas openpyxl sqlite-utils
+
+      - name: Merge XLSX Files and Create Temp SQLite + Log File
+        run: |
+          python3 <<EOF
+          import pandas as pd
+          import sqlite3
+          import os
+          from datetime import datetime
+          import traceback
+
+          try:
+              scan_file = "conversation/csv/scanning.xlsx"
+              price_file = "conversation/csv/prices.xlsx"
+
+              os.makedirs("conversation/Temp", exist_ok=True)
+              log_path = "conversation/Temp/conversion_log.txt"
+
+              with open(log_path, "w") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 1: Files received. Starting merge...\n")
+
+              scan_df = pd.read_excel(scan_file)
+              price_df = pd.read_excel(price_file)
+
+              price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
+              price_df = price_df[["Barcode", "OriginalPrice"]]
+
+              merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
+
+              merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(
+                  lambda x: str(int(x)) if pd.notna(x) and x == int(x) else ('' if pd.isna(x) else str(x))
+              )
+
+              final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
+              merged_df = merged_df[final_columns]
+
+              db_name = "conversation/Temp/temp.db" # Save as temp.db in Temp folder
+              conn = sqlite3.connect(db_name)
+              merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
+              conn.commit()
+              conn.execute("VACUUM;")
+              conn.close()
+
+              with open(log_path, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 1: Temp SQLite created at {db_name}.\n")
+
+          except Exception as e:
+              os.makedirs("conversation/Temp", exist_ok=True)
+              log_path_error = "conversation/Temp/conversion_log.txt"
+              with open(log_path_error, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Phase 1: Error occurred: {str(e)}\n")
+                  logfile.write(traceback.format_exc())
+              raise
+
+          EOF
+
+      - name: Commit Temp DB and Log File
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add conversation/Temp/temp.db conversation/Temp/conversion_log.txt
+          git commit -m "Phase 1: Prepared temp SQLite from scanning.xlsx and prices.xlsx
+          "
+          git push
