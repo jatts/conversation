@@ -1,2 +1,3 @@
 
 prices_uploaded:true
+scanning_uploaded:true
