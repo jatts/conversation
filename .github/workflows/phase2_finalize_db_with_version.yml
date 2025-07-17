@@ -35,13 +35,20 @@ jobs:
               db_source = "conversation/Temp/temp.db"
               log_path = "conversation/Temp/conversion_log.txt"
 
+              # Check if necessary files exist
               if not os.path.exists(version_path):
                   raise FileNotFoundError(f"Error: version.txt not found at {version_path}. Please upload version.txt to trigger finalization.")
               if not os.path.exists(db_source):
                   raise FileNotFoundError(f"Error: temp.db not found at {db_source}. Phase 1 must complete successfully first.")
 
+              # --- FIX STARTS HERE ---
+              # Read version_name from the file BEFORE it's used
+              with open(version_path, "r") as vfile:
+                  version_name = vfile.read().strip() # <--- This line defines 'version_name'
+              # --- FIX ENDS HERE ---
+
               os.makedirs("conversation/Ready", exist_ok=True)
-              db_target = f"conversation/Ready/{version_name}.db"
+              db_target = f"conversation/Ready/{version_name}.db" # Now 'version_name' is defined
 
               os.rename(db_source, db_target)
 
@@ -79,18 +86,12 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # Add the newly created finalized ZIP file
           git add conversation/Ready/*.zip
-          # Add the updated log file and the version.txt which was part of the trigger
           git add conversation/Temp/conversion_log.txt conversation/Temp/version.txt
           
-          # Remove the temporary DB file from the repository
           git rm conversation/Temp/temp.db || true
-          
-          # --- NEW ADDITION: Remove original source files from csv folder ---
           git rm conversation/csv/scanning.xlsx || true
           git rm conversation/csv/prices.xlsx || true
-          # --- END NEW ADDITION ---
           
           git commit -m "Phase 2: Finalized SQLite ZIP and cleaned up unnecessary files, including source CSVs"
           git push
