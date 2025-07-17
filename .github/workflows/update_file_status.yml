@@ -1,0 +1,68 @@
+# .github/workflows/update_file_status.yml
+name: Update File Upload Status
+
+on:
+  push:
+    paths:
+      - 'conversation/csv/scanning.xlsx' # Triggers when scanning.xlsx is pushed
+      - 'conversation/csv/prices.xlsx'   # Triggers when prices.xlsx is pushed
+
+jobs:
+  update_status_marker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Determine which file was pushed
+        id: get_file_type
+        run: |
+          # Detect which file path was changed
+          if git diff --name-only HEAD~1 HEAD | grep -q "conversation/csv/scanning.xlsx"; then
+            echo "file_type=scanning" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only HEAD~1 HEAD | grep -q "conversation/csv/prices.xlsx"; then
+            echo "file_type=prices" >> "$GITHUB_OUTPUT"
+          else
+            echo "file_type=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update file_ready_status.txt with Python
+        run: |
+          python3 <<EOF
+          import os
+          from datetime import datetime
+
+          file_type = "${{ steps.get_file_type.outputs.file_type }}"
+          status_file_path = "conversation/Temp/file_ready_status.txt"
+          
+          os.makedirs(os.path.dirname(status_file_path), exist_ok=True)
+
+          statuses = {}
+          if os.path.exists(status_file_path):
+              with open(status_file_path, 'r') as f:
+                  for line in f:
+                      line = line.strip()
+                      if line and ':' in line:
+                          key, value = line.split(':', 1)
+                          statuses[key.strip()] = value.strip()
+          
+          # Update the status for the pushed file type with a timestamp
+          if file_type == "scanning":
+              statuses['scanning_ready'] = f"true_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+          elif file_type == "prices":
+              statuses['prices_ready'] = f"true_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+          
+          # Write updated statuses back to file
+          with open(status_file_path, 'w') as f:
+              for key, value in sorted(statuses.items()):
+                  f.write(f"{key}:{value}\n")
+          
+          print(f"Status for {file_type} updated in {status_file_path}.")
+          EOF
+
+      - name: Commit file_ready_status.txt changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add conversation/Temp/file_ready_status.txt
+          git commit -m "Updated file ready status for ${{ steps.get_file_type.outputs.file_type }}" || echo "No status change to commit."
+          git push
