@@ -56,9 +56,7 @@ jobs:
               with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   zipf.write(db_target, os.path.basename(db_target))
 
-              # --- NEW ADDITION: Remove the .db file after zipping ---
-              os.remove(db_target)
-              # --- END NEW ADDITION ---
+              os.remove(db_target) # Remove the .db file after zipping
 
               with open(log_path, "a") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
@@ -81,18 +79,18 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # Only add the ZIP file from the Ready folder
+          # Add the newly created finalized ZIP file
           git add conversation/Ready/*.zip
           # Add the updated log file and the version.txt which was part of the trigger
           git add conversation/Temp/conversion_log.txt conversation/Temp/version.txt
           
           # Remove the temporary DB file from the repository
           git rm conversation/Temp/temp.db || true
-          # Remove the .db file from the repository that was briefly in conversation/Ready/
-          # Kyunki humne ise python script mein hi remove kar diya hai, toh yahan `git rm` ki zaroorat nahi.
-          # Lekin agar aapko yakeen na ho ki python script ne remove kiya ya nahi, toh aap yahan bhi try kar sakte hain.
-          # git rm conversation/Ready/*.db || true 
           
-          git commit -m "Phase 2: Finalized SQLite ZIP and cleaned up unnecessary files"
-  
+          # --- NEW ADDITION: Remove original source files from csv folder ---
+          git rm conversation/csv/scanning.xlsx || true
+          git rm conversation/csv/prices.xlsx || true
+          # --- END NEW ADDITION ---
+          
+          git commit -m "Phase 2: Finalized SQLite ZIP and cleaned up unnecessary files, including source CSVs"
           git push
