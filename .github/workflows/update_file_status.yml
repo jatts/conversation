@@ -17,12 +17,17 @@ jobs:
         id: get_file_type
         run: |
           # Detect which file path was changed
+          # Using git diff HEAD~1 HEAD to compare current commit with previous one
+          # This is more reliable than just checking single file existence
           if git diff --name-only HEAD~1 HEAD | grep -q "conversation/csv/scanning.xlsx"; then
             echo "file_type=scanning" >> "$GITHUB_OUTPUT"
+            echo "Detected file push: scanning.xlsx"
           elif git diff --name-only HEAD~1 HEAD | grep -q "conversation/csv/prices.xlsx"; then
             echo "file_type=prices" >> "$GITHUB_OUTPUT"
+            echo "Detected file push: prices.xlsx"
           else
             echo "file_type=unknown" >> "$GITHUB_OUTPUT"
+            echo "Could not determine which file was pushed."
           fi
 
       - name: Update file_ready_status.txt with Python
@@ -30,33 +35,58 @@ jobs:
           python3 <<EOF
           import os
           from datetime import datetime
+          import sys # Import sys for debugging prints
 
           file_type = "${{ steps.get_file_type.outputs.file_type }}"
           status_file_path = "conversation/Temp/file_ready_status.txt"
           
+          print(f"DEBUG: Processing file_type: {file_type}", file=sys.stderr)
+          print(f"DEBUG: Status file path: {status_file_path}", file=sys.stderr)
+
+          # Ensure directory exists
           os.makedirs(os.path.dirname(status_file_path), exist_ok=True)
 
           statuses = {}
+          # Read existing statuses
           if os.path.exists(status_file_path):
-              with open(status_file_path, 'r') as f:
-                  for line in f:
-                      line = line.strip()
-                      if line and ':' in line:
-                          key, value = line.split(':', 1)
-                          statuses[key.strip()] = value.strip()
+              try:
+                  with open(status_file_path, 'r') as f:
+                      for line in f:
+                          line = line.strip()
+                          if line and ':' in line:
+                              key, value = line.split(':', 1)
+                              statuses[key.strip()] = value.strip()
+                  print(f"DEBUG: Existing statuses read: {statuses}", file=sys.stderr)
+              except Exception as e:
+                  print(f"ERROR: Could not read existing status file: {e}", file=sys.stderr)
+          else:
+              print(f"DEBUG: Status file does not exist, creating new.", file=sys.stderr)
           
           # Update the status for the pushed file type with a timestamp
+          current_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
           if file_type == "scanning":
-              statuses['scanning_ready'] = f"true_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+              statuses['scanning_ready'] = f"true_{current_timestamp}"
           elif file_type == "prices":
-              statuses['prices_ready'] = f"true_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+              statuses['prices_ready'] = f"true_{current_timestamp}"
+          else:
+              print(f"WARNING: Unknown file type '{file_type}', not updating status.", file=sys.stderr)
           
-          # Write updated statuses back to file
-          with open(status_file_path, 'w') as f:
-              for key, value in sorted(statuses.items()):
-                  f.write(f"{key}:{value}\n")
+          print(f"DEBUG: Updated statuses to write: {statuses}", file=sys.stderr)
+
+          # Write updated statuses back to file, ensuring a clean format
+          try:
+              # Using 'w' mode will overwrite the file. Ensure sorted keys for consistent output.
+              with open(status_file_path, 'w') as f:
+                  for key, value in sorted(statuses.items()):
+                      line_to_write = f"{key}:{value}\n"
+                      f.write(line_to_write)
+                      print(f"DEBUG: Wrote line: {line_to_write.strip()}", file=sys.stderr)
+              print(f"Status for {file_type} updated successfully in {status_file_path}.", file=sys.stderr)
+          except Exception as e:
+              print(f"ERROR: Could not write to status file: {e}", file=sys.stderr)
+              # If writing fails, we should make the job fail to indicate a problem
+              sys.exit(1)
           
-          print(f"Status for {file_type} updated in {status_file_path}.")
           EOF
 
       - name: Commit file_ready_status.txt changes
