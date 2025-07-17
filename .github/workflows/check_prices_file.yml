@@ -12,34 +12,48 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Mark prices.xlsx as uploaded
-        run: |
-          mkdir -p conversation/Temp # Ensure directory exists
-          TEMP_FILE="conversation/Temp/upload_temp.txt"
-          TIMESTAMP=$(date +"%Y%m%d_%H%M%S") # Get current timestamp
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
 
-          # Read existing content, update or add 'prices_uploaded' with timestamp
-          if [ -f "$TEMP_FILE" ]; then
-            CONTENT=$(cat "$TEMP_FILE")
-          else
-            CONTENT=""
-          fi
+      - name: Mark prices.xlsx as uploaded using Python
+        run: |
+          python3 <<EOF
+          import os
+          from datetime import datetime
+
+          temp_file_path = "conversation/Temp/upload_temp.txt"
           
-          # Remove any existing prices_uploaded line to avoid duplicates
-          CLEANED_CONTENT=$(echo "$CONTENT" | grep -v "prices_uploaded:")
+          # Ensure directory exists
+          os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
+
+          # Read existing statuses
+          statuses = {}
+          if os.path.exists(temp_file_path):
+              with open(temp_file_path, 'r') as f:
+                  for line in f:
+                      line = line.strip()
+                      if line and ':' in line:
+                          key, value = line.split(':', 1)
+                          statuses[key.strip()] = value.strip()
           
-          # Add the new prices_uploaded line with timestamp
-          NEW_CONTENT="${CLEANED_CONTENT}\nprices_uploaded:true_${TIMESTAMP}"
+          # Update prices_uploaded status with timestamp
+          timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+          statuses['prices_uploaded'] = f"true_{timestamp}"
+
+          # Write updated statuses back to file, ensuring a clean format
+          with open(temp_file_path, 'w') as f:
+              for key, value in sorted(statuses.items()): # Sort for consistent order
+                  f.write(f"{key}:{value}\n")
           
-          # Remove leading/trailing newlines and write to file
-          echo -e "$NEW_CONTENT" | sed '/^$/d' > "$TEMP_FILE"
-          
-          echo "Prices file status marked in $TEMP_FILE with timestamp."
+          print(f"Prices file status marked in {temp_file_path} with timestamp.")
+          EOF
 
       - name: Commit upload_temp.txt changes
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Temp/upload_temp.txt
-          git commit -m "Marked prices.xlsx as uploaded with timestamp." || echo "No changes to commit for prices.xlsx status."
+          git commit -m "Marked prices.xlsx as uploaded with timestamp via Python." || echo "No changes to commit for prices.xlsx status."
           git push
