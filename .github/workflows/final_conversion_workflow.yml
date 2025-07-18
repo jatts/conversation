@@ -1,0 +1,126 @@
+# .github/workflows/final_conversion_workflow.yml
+name: Final Conversion Workflow (Triggered by Version File)
+
+on:
+  push:
+    paths:
+      - 'conversation/Temp/version.txt' # Triggers ONLY when version.txt is created/modified and pushed
+
+jobs:
+  run_final_conversion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Log Final Conversion Workflow Start
+        run: |
+          mkdir -p conversation/Logs
+          echo "$(date +"%Y-%m-%d %H:%M:%S") - Final conversion workflow triggered by version.txt." >> conversation/Logs/workflow_activity.log
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add conversation/Logs/workflow_activity.log
+          git commit -m "Log: Final workflow triggered." || echo "No new log entry commit."
+          git push || echo "Log push failed."
+
+      - name: Verify merging_temp.csv and version.txt exist
+        run: |
+          MERGED_CSV="conversation/Temp/merging_temp.csv"
+          VERSION_FILE="conversation/Temp/version.txt"
+          if [ ! -f "$MERGED_CSV" ]; then
+            echo "Error: merging_temp.csv not found. Aborting final conversion."
+            exit 1
+          fi
+          if [ ! -f "$VERSION_FILE" ]; then
+            echo "Error: version.txt not found. Aborting final conversion."
+            exit 1
+          fi
+          echo "Both merging_temp.csv and version.txt found. Proceeding with final conversion."
+
+      - name: Set up Python for Final Conversion
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Required Python Packages for Final Conversion
+        run: pip install pandas openpyxl sqlite-utils
+
+      - name: Run Final Conversion (CSV to DB, Zip)
+        run: |
+          python3 <<EOF
+          import pandas as pd
+          import sqlite3
+          import os
+          from datetime import datetime
+          import zipfile
+          import traceback
+          import sys
+
+          try:
+              merged_csv_path = "conversation/Temp/merging_temp.csv"
+              version_file_path = "conversation/Temp/version.txt"
+              log_path = "conversation/Logs/workflow_activity.log"
+              
+              os.makedirs("conversation/Ready", exist_ok=True)
+
+              with open(version_file_path, 'r') as f:
+                  version_name = f.read().strip() # Read version from file
+
+              with open(log_path, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} Final Conversion Started for version: {version_name}.\n")
+
+              merged_df = pd.read_csv(merged_csv_path)
+
+              db_target = f"conversation/Ready/{version_name}.db"
+              conn = sqlite3.connect(db_target)
+              merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
+              conn.commit()
+              conn.execute("VACUUM;")
+              conn.close()
+
+              with sqlite3.connect(db_target) as conn:
+                  conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
+                  conn.execute("DELETE FROM databaseversion")
+                  conn.execute("INSERT INTO databaseversion (DBversion) VALUES (?)", (version_name,))
+                  conn.commit()
+                  conn.execute("VACUUM;")
+
+              zip_name = f"conversation/Ready/{version_name}.zip"
+              with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                  zipf.write(db_target, os.path.basename(db_target))
+
+              os.remove(db_target) # Remove the .db file after zipping
+
+              with open(log_path, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} DB conversion and zipping complete. Final ZIP created: {os.path.basename(zip_name)}.\n")
+                  logfile.write(f"{now} Workflow Finished.\n")
+
+          except Exception as e:
+              log_path_error = "conversation/Logs/workflow_activity.log"
+              with open(log_path_error, "a") as logfile:
+                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                  logfile.write(f"{now} ERROR: Final Conversion Failed: {str(e)}\n")
+                  logfile.write(traceback.format_exc())
+              sys.exit(1) # Fail the job if final conversion fails
+          EOF
+        env:
+          PYTHONUNBUFFERED: 1
+
+      - name: Clean Up All Source and Temp Files, and Commit Finalized
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          
+          # Add the newly created finalized ZIP file and updated log file
+          git add conversation/Ready/*.zip
+          git add conversation/Logs/workflow_activity.log
+          
+          # Remove all temporary and source files
+          git rm conversation/csv/scanning.xlsx || true
+          git rm conversation/csv/prices.xlsx || true
+          git rm conversation/Temp/merging_temp.csv || true
+          git rm conversation/Temp/version.txt || true
+          
+          git commit -m "Finalized: Created ZIP, cleaned up source and temporary files."
+          git pus
