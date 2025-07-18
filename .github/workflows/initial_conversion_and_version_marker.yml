@@ -55,7 +55,9 @@ jobs:
           import sqlite3
           import os
           from datetime import datetime
-          
+          import traceback
+          import sys # Import sys for sys.exit
+
           try:
               scan_file = "conversation/csv/scanning.xlsx"
               price_file = "conversation/csv/prices.xlsx"
@@ -86,7 +88,6 @@ jobs:
               conn = sqlite3.connect(db_name_temp)
               merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
               conn.commit()
-              conn.execute("VACUUM;")
               conn.close()
 
               # Create the version.txt marker file
@@ -110,12 +111,12 @@ jobs:
         env:
           PYTHONUNBUFFERED: 1 # Ensure Python output is unbuffered for real-time logs
 
-      - name: Commit temp_conversion.db and version.txt
+      - name: Upload conversion artifacts (temp_conversion.db and version.txt)
         if: steps.check_files.outputs.both_files_exist == 'true'
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add conversation/Temp/temp_conversion.db
-          git add conversation/Temp/version.txt
-          git commit -m "Phase 1: Created temp_conversion.db and version.txt marker." || echo "No new changes to commit."
-          git push
+        uses: actions/upload-artifact@v3
+        with:
+          name: conversion-data
+          path: |
+            conversation/Temp/temp_conversion.db
+            conversation/Temp/version.txt
+          retention-days: 1 # Keep artifact for 1 day (or adjust as needed)
