@@ -62,20 +62,18 @@ jobs:
               scan_df = pd.read_excel(scan_file)
               price_df = pd.read_excel(price_file)
 
-              # Convert OriginalPrice to numeric, coercing errors
               price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
               price_df = price_df[["Barcode", "OriginalPrice"]]
 
               merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
 
-              # Apply custom formatting for OriginalPrice
               def format_price(price):
-                  if pd.isna(price): # Check for NaN (Not a Number)
-                      return '' # Return empty string if NaN/missing
+                  if pd.isna(price):
+                      return ''
                   elif isinstance(price, (int, float)) and price == int(price):
-                      return str(int(price)) # Convert to int then string to remove .0 or .00
+                      return str(int(price))
                   else:
-                      return str(price) # For other cases, return as string
+                      return str(price)
 
               merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(format_price)
 
@@ -85,7 +83,6 @@ jobs:
               merged_csv_path = "conversation/Temp/merging_temp.csv"
               merged_df.to_csv(merged_csv_path, index=False)
 
-              # Create the version.txt marker file with timestamp
               version_file_path = "conversation/Temp/version.txt"
               timestamp_for_version = datetime.now().strftime("DB_Version_%Y%m%d_%H%M%S")
               with open(version_file_path, 'w') as f:
@@ -101,7 +98,7 @@ jobs:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
                   logfile.write(f"{now} ERROR: Initial Merge Failed: {str(e)}\n")
                   logfile.write(traceback.format_exc())
-              sys.exit(1) # Fail the job if initial merge fails
+              sys.exit(1)
           EOF
         env:
           PYTHONUNBUFFERED: 1
@@ -111,8 +108,10 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+          # Pull latest changes from remote before pushing to avoid conflicts
+          git pull --rebase origin main || true # Assuming 'main' is your branch name
           git add conversation/Temp/merging_temp.csv
           git add conversation/Temp/version.txt
-          git add conversation/Logs/workflow_activity.log # Also commit log updates
+          git add conversation/Logs/workflow_activity.log
           git commit -m "Initial Merge: Created merging_temp.csv and version.txt." || echo "No new changes to commit."
           git push
