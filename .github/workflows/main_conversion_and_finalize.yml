@@ -1,10 +1,8 @@
-# .github/workflows/main_conversion_and_finalize.yml
-name: Main Conversion and Finalization Workflow
+# .github/workflows/main_conversion_workflow.yml
+name: Main Conversion Workflow (Dispatched)
 
 on:
-  push:
-    paths:
-      - 'conversation/Temp/both_files_ready.txt' # Triggers ONLY when this specific marker file is created/modified/deleted
+  workflow_dispatch: # This workflow will now be triggered by workflow_dispatch events
 
 jobs:
   run_full_conversion:
@@ -12,33 +10,16 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Create Log Entry for Main Workflow Start
+      - name: Create Log Entry for Main Workflow Start (Dispatched)
         run: |
           mkdir -p conversation/Logs # Ensure Logs directory exists
-          echo "$(date +"%Y-%m-%d %H:%M:%S") - Main conversion workflow triggered by both_files_ready.txt." >> conversation/Logs/workflow_activity.log
+          echo "$(date +"%Y-%m-%d %H:%M:%S") - Main conversion workflow started via dispatch." >> conversation/Logs/workflow_activity.log
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Logs/workflow_activity.log
-          git commit -m "Log: Main workflow triggered." || echo "No new log entry commit."
-          git push || echo "Log push failed, might be merged by another push."
+          git commit -m "Log: Main workflow dispatched and started." || echo "No new log entry commit."
+          git push || echo "Log push failed."
 
-      # --- Initial Cleanup of the trigger marker file ---
-      - name: Delete both_files_ready.txt marker for next cycle
-        run: |
-          BOTH_READY_MARKER="conversation/Temp/both_files_ready.txt"
-          if [ -f "$BOTH_READY_MARKER" ]; then
-            git config user.name "github-actions"
-            git config user.email "actions@github.com"
-            git rm "$BOTH_READY_MARKER"
-            git commit -m "Deleted both_files_ready.txt marker to start conversion."
-            git push
-            echo "both_files_ready.txt deleted."
-          else
-            echo "both_files_ready.txt not found, possibly already deleted or initial trigger issue."
-          fi
-      # --- End Initial Cleanup ---
-
-      # --- Verification step (Crucial: ensure actual data files exist) ---
       - name: Verify both actual data files exist before starting conversion
         run: |
           SCANNING_FILE="conversation/csv/scanning.xlsx"
@@ -53,7 +34,6 @@ jobs:
             exit 1
           fi
           echo "Both scanning.xlsx and prices.xlsx found. Proceeding with conversion."
-      # --- End Verification step ---
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -77,7 +57,6 @@ jobs:
               scan_file = "conversation/csv/scanning.xlsx"
               price_file = "conversation/csv/prices.xlsx"
               
-              # Ensure output directories exist
               os.makedirs("conversation/Temp", exist_ok=True)
               os.makedirs("conversation/Ready", exist_ok=True)
               log_path = "conversation/Temp/conversion_log.txt"
@@ -87,7 +66,6 @@ jobs:
                   logfile.write(f"{now} Full Conversion Workflow Started.\n")
                   logfile.write(f"{now} Reading input files.\n")
 
-              # Phase 1: Merge XLSX
               scan_df = pd.read_excel(scan_file)
               price_df = pd.read_excel(price_file)
 
@@ -114,7 +92,6 @@ jobs:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
                   logfile.write(f"{now} Phase 1: Data merged and temporary DB created: {db_name_temp}.\n")
 
-              # Phase 2: Finalize DB and ZIP
               timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
               version_name = f"DB_Version_{timestamp}"
               db_target = f"conversation/Ready/{version_name}.db"
@@ -154,12 +131,9 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # Add the newly created finalized ZIP file
           git add conversation/Ready/*.zip
-          # Add the updated log file
           git add conversation/Temp/conversion_log.txt
           
-          # Remove original source files and other temp files from the repository
           git rm conversation/csv/scanning.xlsx || true
           git rm conversation/csv/prices.xlsx || true
           git rm conversation/Temp/temp_conversion.db || true
