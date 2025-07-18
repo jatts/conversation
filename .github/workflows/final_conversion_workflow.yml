@@ -123,4 +123,4 @@ jobs:
           git rm conversation/Temp/version.txt || true
           
           git commit -m "Finalized: Created ZIP, cleaned up source and temporary files."
-          git pus
+          git push
