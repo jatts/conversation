@@ -21,28 +21,3 @@ jobs:
           git add conversation/Logs/workflow_activity.log
           git commit -m "Log: Scanning.xlsx received." || echo "No new log entry commit."
           git push || echo "Log push failed, might be merged by another push."
-
-2. on_prices_upload.yml (Modified - Only Logs)
-# .github/workflows/on_prices_upload.yml
-name: On Prices File Upload - Log Received
-
-on:
-  push:
-    paths:
-      - 'conversation/csv/prices.xlsx' # Triggers only when prices.xlsx is pushed
-
-jobs:
-  log_received:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Log Prices.xlsx File Received
-        run: |
-          mkdir -p conversation/Logs # Ensure Logs directory exists
-          echo "$(date +"%Y-%m-%d %H:%M:%S") - Prices.xlsx file received." >> conversation/Logs/workflow_activity.log
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add conversation/Logs/workflow_activity.log
-          git commit -m "Log: Prices.xlsx received." || echo "No new log entry commit."
-          git push || echo "Log push failed, might be merged by another push."
