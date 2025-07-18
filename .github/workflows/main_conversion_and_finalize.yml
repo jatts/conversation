@@ -2,83 +2,54 @@
 name: Main Conversion and Finalization Workflow
 
 on:
-  # This workflow will be triggered by changes to the marker files.
-  # The 'paths' filter means it runs if any of these files are added/modified/deleted.
   push:
     paths:
-      - 'conversation/Temp/scanning_uploaded.txt'
-      - 'conversation/Temp/prices_uploaded.txt'
+      - 'conversation/Temp/both_files_ready.txt' # Triggers ONLY when this specific marker file is created/modified/deleted
 
 jobs:
-  # This job checks if both markers exist, then creates a single trigger file and deletes markers.
-  check_and_prepare_for_conversion:
+  run_full_conversion:
     runs-on: ubuntu-latest
-    outputs:
-      proceed_trigger: ${{ steps.prepare_trigger.outputs.proceed_trigger }} # Pass output to next job
     steps:
       - uses: actions/checkout@v3
 
-      - name: Check for both marker files and prepare trigger
-        id: prepare_trigger
+      - name: Create Log Entry for Main Workflow Start
         run: |
-          SCANNING_MARKER="conversation/Temp/scanning_uploaded.txt"
-          PRICES_MARKER="conversation/Temp/prices_uploaded.txt"
-          BOTH_READY_MARKER="conversation/Temp/both_files_ready.txt"
-
-          if [ -f "$SCANNING_MARKER" ] && [ -f "$PRICES_MARKER" ]; then
-            echo "Both scanning_uploaded.txt and prices_uploaded.txt found."
-            echo "Deleting individual markers and creating combined trigger."
-            
-            # Delete individual markers
-            rm "$SCANNING_MARKER"
-            rm "$PRICES_MARKER"
-            
-            # Create the combined trigger file
-            touch "$BOTH_READY_MARKER"
-            echo "Both files ready at $(date)" > "$BOTH_READY_MARKER"
-            
-            echo "proceed_trigger=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "One or both marker files are missing. Skipping main conversion."
-            echo "proceed_trigger=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Commit marker file changes (deletion/creation)
-        if: steps.prepare_trigger.outputs.proceed_trigger == 'true' # Only commit if we actually made changes
-        run: |
+          mkdir -p conversation/Logs # Ensure Logs directory exists
+          echo "$(date +"%Y-%m-%d %H:%M:%S") - Main conversion workflow triggered by both_files_ready.txt." >> conversation/Logs/workflow_activity.log
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          
-          # Stage the changes: deletions and new file creation
-          git add conversation/Temp/scanning_uploaded.txt || true # '|| true' to not fail if already deleted/not found
-          git add conversation/Temp/prices_uploaded.txt || true
-          git add conversation/Temp/both_files_ready.txt
-          
-          git rm conversation/Temp/scanning_uploaded.txt || true
-          git rm conversation/Temp/prices_uploaded.txt || true
-          
-          git commit -m "Prepared for full conversion: Deleted individual markers, created combined trigger."
-          git push
+          git add conversation/Logs/workflow_activity.log
+          git commit -m "Log: Main workflow triggered." || echo "No new log entry commit."
+          git push || echo "Log push failed, might be merged by another push."
 
-  # Full conversion job (Phase 1 + Phase 2 logic combined)
-  # This job will now depend on the 'both_files_ready.txt' being committed.
-  # We will trigger it using a separate workflow that only triggers on 'both_files_ready.txt'
-  # OR, we can make this job run only if 'both_files_ready.txt' exists.
-  
-  # Option 1: Keep it in the same workflow, relying on file existence after commit
-  # This is simpler as it avoids another workflow file.
-  run_full_conversion:
-    needs: check_and_prepare_for_conversion # Ensure this runs after markers are handled
-    if: needs.check_and_prepare_for_conversion.outputs.proceed_trigger == 'true' # Only run if trigger was set
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      # --- Verification step (optional but good) ---
-      - name: Verify both actual data files exist (redundancy check)
+      # --- Initial Cleanup of the trigger marker file ---
+      - name: Delete both_files_ready.txt marker for next cycle
         run: |
-          if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
-            echo "Error: Actual scanning.xlsx and prices.xlsx not found despite markers. Aborting."
+          BOTH_READY_MARKER="conversation/Temp/both_files_ready.txt"
+          if [ -f "$BOTH_READY_MARKER" ]; then
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git rm "$BOTH_READY_MARKER"
+            git commit -m "Deleted both_files_ready.txt marker to start conversion."
+            git push
+            echo "both_files_ready.txt deleted."
+          else
+            echo "both_files_ready.txt not found, possibly already deleted or initial trigger issue."
+          fi
+      # --- End Initial Cleanup ---
+
+      # --- Verification step (Crucial: ensure actual data files exist) ---
+      - name: Verify both actual data files exist before starting conversion
+        run: |
+          SCANNING_FILE="conversation/csv/scanning.xlsx"
+          PRICES_FILE="conversation/csv/prices.xlsx"
+          
+          if [ ! -f "$SCANNING_FILE" ]; then
+            echo "Error: scanning.xlsx not found. Aborting conversion."
+            exit 1
+          fi
+          if [ ! -f "$PRICES_FILE" ]; then
+            echo "Error: prices.xlsx not found. Aborting conversion."
             exit 1
           fi
           echo "Both scanning.xlsx and prices.xlsx found. Proceeding with conversion."
@@ -132,7 +103,7 @@ jobs:
               final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
               merged_df = merged_df[final_columns]
 
-              db_name_temp = "conversation/Temp/temp_conversion.db" # Using a slightly different temp name
+              db_name_temp = "conversation/Temp/temp_conversion.db"
               conn = sqlite3.connect(db_name_temp)
               merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
               conn.commit()
@@ -148,7 +119,7 @@ jobs:
               version_name = f"DB_Version_{timestamp}"
               db_target = f"conversation/Ready/{version_name}.db"
 
-              os.rename(db_name_temp, db_target) # Rename temp DB to final name
+              os.rename(db_name_temp, db_target)
 
               with sqlite3.connect(db_target) as conn:
                   conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
@@ -161,7 +132,7 @@ jobs:
               with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   zipf.write(db_target, os.path.basename(db_target))
 
-              os.remove(db_target) # Remove the .db file after zipping
+              os.remove(db_target)
 
               with open(log_path, "a") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
@@ -175,10 +146,10 @@ jobs:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
                   logfile.write(f"{now} ERROR: Full Conversion Workflow Failed: {str(e)}\n")
                   logfile.write(traceback.format_exc())
-              raise # Re-raise to fail the workflow
+              raise
           EOF
 
-      - name: Commit Finalized Files and Clean Up All Temp Files (including markers)
+      - name: Commit Finalized Files and Clean Up All Temp Files
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
@@ -188,12 +159,11 @@ jobs:
           # Add the updated log file
           git add conversation/Temp/conversion_log.txt
           
-          # Remove original source files and all marker/temp files from the repository
+          # Remove original source files and other temp files from the repository
           git rm conversation/csv/scanning.xlsx || true
           git rm conversation/csv/prices.xlsx || true
-          git rm conversation/Temp/temp_conversion.db || true # Ensure this temp DB is removed
-          git rm conversation/Temp/version.txt || true # If version.txt is created, delete it
-          git rm conversation/Temp/both_files_ready.txt || true # Delete the combined trigger file
-
+          git rm conversation/Temp/temp_conversion.db || true
+          git rm conversation/Temp/version.txt || true
+          
           git commit -m "Full Conversion: Finalized ZIP, cleaned up all temporary files and source data."
           git push
