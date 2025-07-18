@@ -46,6 +46,7 @@ jobs:
           from datetime import datetime
           import sys
           import traceback
+          import math # Import math for checking NaN
 
           try:
               scan_file = "conversation/csv/scanning.xlsx"
@@ -61,14 +62,22 @@ jobs:
               scan_df = pd.read_excel(scan_file)
               price_df = pd.read_excel(price_file)
 
+              # Convert OriginalPrice to numeric, coercing errors
               price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
               price_df = price_df[["Barcode", "OriginalPrice"]]
 
               merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
 
-              merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(
-                  lambda x: str(int(x)) if pd.notna(x) and x == int(x) else ('' if pd.isna(x) else str(x))
-              )
+              # Apply custom formatting for OriginalPrice
+              def format_price(price):
+                  if pd.isna(price): # Check for NaN (Not a Number)
+                      return '' # Return empty string if NaN/missing
+                  elif isinstance(price, (int, float)) and price == int(price):
+                      return str(int(price)) # Convert to int then string to remove .0 or .00
+                  else:
+                      return str(price) # For other cases, return as string
+
+              merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(format_price)
 
               final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
               merged_df = merged_df[final_columns]
