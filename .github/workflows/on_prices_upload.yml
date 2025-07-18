@@ -1,0 +1,43 @@
+# .github/workflows/on_prices_upload.yml
+name: On Prices File Upload - Check & Mark Both Ready
+
+on:
+  push:
+    paths:
+      - 'conversation/csv/prices.xlsx' # Triggers only when prices.xlsx is pushed
+
+jobs:
+  check_and_mark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Check if both files exist and create both_files_ready.txt
+        run: |
+          SCANNING_FILE="conversation/csv/scanning.xlsx"
+          PRICES_FILE="conversation/csv/prices.xlsx"
+          BOTH_READY_MARKER="conversation/Temp/both_files_ready.txt"
+          
+          mkdir -p conversation/Temp # Ensure Temp directory exists
+
+          echo "Checking for both files readiness after prices.xlsx upload..."
+          
+          # Check if both actual data files exist in the repository
+          if [ -f "$SCANNING_FILE" ] && [ -f "$PRICES_FILE" ]; then
+            echo "Both scanning.xlsx and prices.xlsx found."
+            
+            # Create the combined trigger file
+            touch "$BOTH_READY_MARKER"
+            echo "Both files ready at $(date +"%Y-%m-%d %H:%M:%S")" > "$BOTH_READY_MARKER" # Added timestamp
+            echo "Created both_files_ready.txt"
+            
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add "$BOTH_READY_MARKER"
+            
+            git commit -m "Created both_files_ready.txt marker after prices.xlsx upload." || echo "No changes to commit for both_files_ready.txt."
+            git push
+            echo "Pushed changes for both_files_ready.txt."
+          else
+            echo "Only prices.xlsx (or neither) found. Not creating both_files_ready.txt yet."
+          fi
