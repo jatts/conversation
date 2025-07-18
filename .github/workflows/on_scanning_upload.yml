@@ -1,10 +1,10 @@
-# .github/workflows/on_scanning_upload.yml
+l# .github/workflows/on_scanning_upload.yml
 name: On Scanning File Upload - Log Received
 
 on:
   push:
     paths:
-      - 'conversation/csv/scanning.xlsx' # Triggers only when scanning.xlsx is pushed
+      - 'conversation/csv/scanning.xlsx'
 
 jobs:
   log_received:
