@@ -13,15 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Create Log Entry for Initial Conversion Check
+      - name: Create Log Entry for Initial Conversion Check (and Push)
         run: |
-          mkdir -p conversation/Logs
+          mkdir -p conversation/Logs # Ensure Logs directory exists
           echo "$(date +"%Y-%m-%d %H:%M:%S") - Initial conversion check triggered by file push." >> conversation/Logs/workflow_activity.log
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Logs/workflow_activity.log
-          git commit -m "Log: Initial conversion check initiated." || echo "No new log entry commit."
-          git push || echo "Log push failed."
+          git commit -m "Log: Initial conversion check initiated." || echo "No new log entry commit for workflow activity."
+          git push || echo "Log push failed, might be merged by another push."
 
       - name: Verify both actual data files exist before initial conversion
         id: check_files
@@ -56,7 +56,7 @@ jobs:
           import os
           from datetime import datetime
           import traceback
-          import sys # Import sys for sys.exit
+          import sys # Make sure sys is imported
 
           try:
               scan_file = "conversation/csv/scanning.xlsx"
@@ -110,13 +110,15 @@ jobs:
           EOF
         env:
           PYTHONUNBUFFERED: 1 # Ensure Python output is unbuffered for real-time logs
+      
+      - name: Debug: List files in conversation/Temp/ after Python script
+        if: steps.check_files.outputs.both_files_exist == 'true'
+        run: ls -l conversation/Temp/ # Use -l for detailed listing
 
       - name: Upload conversion artifacts (temp_conversion.db and version.txt)
         if: steps.check_files.outputs.both_files_exist == 'true'
-        uses: actions/upload-artifact@v4 # Changed from v3 to v4
+        uses: actions/upload-artifact@v4
         with:
           name: conversion-data
-          path: |
-            conversation/Temp/temp_conversion.db
-            conversation/Temp/version.txt
+          path: conversation/Temp/ # Upload the entire Temp directory contents
           retention-days: 1 # Keep artifact for 1 day (or adjust as needed)
