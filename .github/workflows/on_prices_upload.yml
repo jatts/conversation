@@ -4,7 +4,7 @@ name: On Prices File Upload - Log Received
 on:
   push:
     paths:
-      - 'conversation/csv/prices.xlsx' # Triggers only when prices.xlsx is pushed
+      - 'conversation/csv/prices.xlsx'
 
 jobs:
   log_received:
