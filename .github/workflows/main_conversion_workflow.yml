@@ -55,7 +55,7 @@ jobs:
           from datetime import datetime
           import zipfile
           import traceback
-          import sys # Ensure sys is imported for sys.exit
+          import sys
 
           try:
               db_name_temp = "conversation/Temp/temp_conversion.db"
@@ -107,11 +107,11 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # Add the newly created finalized ZIP file and updated log file
           git add conversation/Ready/*.zip
           git add conversation/Logs/workflow_activity.log
           
-          # Only remove source Excel files (temp_conversion.db and version.txt are now artifacts, not in repo)
+          # These lines were likely the cause of the syntax error due to indentation
+          # or unexpected characters. Ensuring perfect alignment here.
           git rm conversation/csv/scanning.xlsx || true
           git rm conversation/csv/prices.xlsx || true
           
