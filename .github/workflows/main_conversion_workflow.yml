@@ -2,7 +2,7 @@
 name: Main Conversion Workflow (Dispatched)
 
 on:
-  workflow_dispatch: # <--- THIS IS THE CRUCIAL LINE! It must be exactly like this.
+  workflow_dispatch: # This workflow will now be triggered by workflow_dispatch events
 
 jobs:
   run_full_conversion:
@@ -106,7 +106,8 @@ jobs:
                   conn.execute("VACUUM;")
 
               zip_name = f"conversation/Ready/{version_name}.zip"
-              with zipfile.ZipFile(zip_name, 'w', zipfile.BLP_DEFLATED) as zipf: # Typo corrected: BLP_DEFLATED to ZIP_DEFLATED
+              # Corrected 'BLP_DEFLATED' to 'ZIP_DEFLATED'
+              with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   zipf.write(db_target, os.path.basename(db_target))
 
               os.remove(db_target)
