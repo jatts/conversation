@@ -2,67 +2,87 @@
 name: Main Conversion and Finalization Workflow
 
 on:
+  # This workflow will be triggered by changes to the marker files.
+  # The 'paths' filter means it runs if any of these files are added/modified/deleted.
   push:
     paths:
-      - 'conversation/Temp/file_ready_status.txt' # Triggers only when the status file is updated
+      - 'conversation/Temp/scanning_uploaded.txt'
+      - 'conversation/Temp/prices_uploaded.txt'
 
 jobs:
-  run_full_conversion_if_ready:
+  # This job checks if both markers exist, then creates a single trigger file and deletes markers.
+  check_and_prepare_for_conversion:
     runs-on: ubuntu-latest
-
+    outputs:
+      proceed_trigger: ${{ steps.prepare_trigger.outputs.proceed_trigger }} # Pass output to next job
     steps:
       - uses: actions/checkout@v3
 
-      - name: Check both files and status marker for readiness
-        id: check_readiness
+      - name: Check for both marker files and prepare trigger
+        id: prepare_trigger
         run: |
-          STATUS_FILE="conversation/Temp/file_ready_status.txt"
-          SCANNING_FILE_EXISTS=false
-          PRICES_FILE_EXISTS=false
-          SCANNING_STATUS_TRUE=false
-          PRICES_STATUS_TRUE=false
+          SCANNING_MARKER="conversation/Temp/scanning_uploaded.txt"
+          PRICES_MARKER="conversation/Temp/prices_uploaded.txt"
+          BOTH_READY_MARKER="conversation/Temp/both_files_ready.txt"
 
-          # 1. Check if physical files exist
-          if [ -f "conversation/csv/scanning.xlsx" ]; then
-            SCANNING_FILE_EXISTS=true
-            echo "Scanning file physically found."
-          fi
-          if [ -f "conversation/csv/prices.xlsx" ]; then
-            PRICES_FILE_EXISTS=true
-            echo "Prices file physically found."
-          fi
-
-          # 2. Check statuses in the marker file
-          if [ -f "$STATUS_FILE" ]; then
-            if grep -q "scanning_ready:true" "$STATUS_FILE"; then
-              SCANNING_STATUS_TRUE=true
-              echo "Scanning status marked true in file_ready_status.txt."
-            fi
-            if grep -q "prices_ready:true" "$STATUS_FILE"; then
-              PRICES_STATUS_TRUE=true
-              echo "Prices status marked true in file_ready_status.txt."
-            fi
+          if [ -f "$SCANNING_MARKER" ] && [ -f "$PRICES_MARKER" ]; then
+            echo "Both scanning_uploaded.txt and prices_uploaded.txt found."
+            echo "Deleting individual markers and creating combined trigger."
+            
+            # Delete individual markers
+            rm "$SCANNING_MARKER"
+            rm "$PRICES_MARKER"
+            
+            # Create the combined trigger file
+            touch "$BOTH_READY_MARKER"
+            echo "Both files ready at $(date)" > "$BOTH_READY_MARKER"
+            
+            echo "proceed_trigger=true" >> "$GITHUB_OUTPUT"
           else
-            echo "file_ready_status.txt not found."
+            echo "One or both marker files are missing. Skipping main conversion."
+            echo "proceed_trigger=false" >> "$GITHUB_OUTPUT"
           fi
 
-          # Determine if conversion should proceed
-          if $SCANNING_FILE_EXISTS && $PRICES_FILE_EXISTS && $SCANNING_STATUS_TRUE && $PRICES_STATUS_TRUE; then
-            echo "All conditions met. Proceeding with full conversion."
-            echo "proceed_conversion=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Conditions not met for full conversion. Skipping."
-            echo "proceed_conversion=false" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Commit marker file changes (deletion/creation)
+        if: steps.prepare_trigger.outputs.proceed_trigger == 'true' # Only commit if we actually made changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          
+          # Stage the changes: deletions and new file creation
+          git add conversation/Temp/scanning_uploaded.txt || true # '|| true' to not fail if already deleted/not found
+          git add conversation/Temp/prices_uploaded.txt || true
+          git add conversation/Temp/both_files_ready.txt
+          
+          git rm conversation/Temp/scanning_uploaded.txt || true
+          git rm conversation/Temp/prices_uploaded.txt || true
+          
+          git commit -m "Prepared for full conversion: Deleted individual markers, created combined trigger."
+          git push
 
-  # PHASE 1: Merge XLSX Files and Create Temp SQLite + Log File
-  merge_and_prepare_temp_db:
-    needs: run_full_conversion_if_ready # This job depends on the readiness check
-    if: needs.run_full_conversion_if_ready.outputs.proceed_conversion == 'true' # Only run if readiness is true
+  # Full conversion job (Phase 1 + Phase 2 logic combined)
+  # This job will now depend on the 'both_files_ready.txt' being committed.
+  # We will trigger it using a separate workflow that only triggers on 'both_files_ready.txt'
+  # OR, we can make this job run only if 'both_files_ready.txt' exists.
+  
+  # Option 1: Keep it in the same workflow, relying on file existence after commit
+  # This is simpler as it avoids another workflow file.
+  run_full_conversion:
+    needs: check_and_prepare_for_conversion # Ensure this runs after markers are handled
+    if: needs.check_and_prepare_for_conversion.outputs.proceed_trigger == 'true' # Only run if trigger was set
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
+
+      # --- Verification step (optional but good) ---
+      - name: Verify both actual data files exist (redundancy check)
+        run: |
+          if [ ! -f "conversation/csv/scanning.xlsx" ] || [ ! -f "conversation/csv/prices.xlsx" ]; then
+            echo "Error: Actual scanning.xlsx and prices.xlsx not found despite markers. Aborting."
+            exit 1
+          fi
+          echo "Both scanning.xlsx and prices.xlsx found. Proceeding with conversion."
+      # --- End Verification step ---
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -72,27 +92,31 @@ jobs:
       - name: Install Required Python Packages
         run: pip install pandas openpyxl sqlite-utils
 
-      - name: Merge XLSX Files and Create Temp SQLite + Log File (Phase 1 Logic)
+      - name: Run Full Conversion (Phase 1 & Phase 2 Logic)
         run: |
           python3 <<EOF
           import pandas as pd
           import sqlite3
           import os
           from datetime import datetime
+          import zipfile
           import traceback
 
           try:
               scan_file = "conversation/csv/scanning.xlsx"
               price_file = "conversation/csv/prices.xlsx"
-
+              
+              # Ensure output directories exist
               os.makedirs("conversation/Temp", exist_ok=True)
+              os.makedirs("conversation/Ready", exist_ok=True)
               log_path = "conversation/Temp/conversion_log.txt"
 
               with open(log_path, "w") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Workflow Started.\n")
-                  logfile.write(f"{now} Processing input files.\n")
+                  logfile.write(f"{now} Full Conversion Workflow Started.\n")
+                  logfile.write(f"{now} Reading input files.\n")
 
+              # Phase 1: Merge XLSX
               scan_df = pd.read_excel(scan_file)
               price_df = pd.read_excel(price_file)
 
@@ -108,8 +132,8 @@ jobs:
               final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
               merged_df = merged_df[final_columns]
 
-              db_name = "conversation/Temp/temp.db"
-              conn = sqlite3.connect(db_name)
+              db_name_temp = "conversation/Temp/temp_conversion.db" # Using a slightly different temp name
+              conn = sqlite3.connect(db_name_temp)
               merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
               conn.commit()
               conn.execute("VACUUM;")
@@ -117,90 +141,14 @@ jobs:
 
               with open(log_path, "a") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Data merged and temporary DB created.\n")
+                  logfile.write(f"{now} Phase 1: Data merged and temporary DB created: {db_name_temp}.\n")
 
+              # Phase 2: Finalize DB and ZIP
               timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
               version_name = f"DB_Version_{timestamp}"
-              
-              version_file_path = "conversation/Temp/version.txt"
-              with open(version_file_path, "w") as vfile:
-                  vfile.write(version_name + "\n")
-              
-              with open(log_path, "a") as logfile:
-                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Version file updated with: '{version_name}'.\n")
-                  logfile.write(f"{now} Merging Complete.\n")
-
-          except Exception as e:
-              os.makedirs("conversation/Temp", exist_ok=True)
-              log_path_error = "conversation/Temp/conversion_log.txt"
-              with open(log_path_error, "a") as logfile:
-                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Error occurred in Phase 1: {str(e)}\n")
-                  logfile.write(traceback.format_exc())
-              raise
-
-          EOF
-
-      - name: Upload Temp Files for Next Job (within same workflow)
-        uses: actions/upload-artifact@v4
-        with:
-          name: temp-conversion-artifacts
-          path: |
-            conversation/Temp/temp.db
-            conversation/Temp/conversion_log.txt
-            conversation/Temp/version.txt
-          retention-days: 1 # You can adjust retention as needed
-
-  # PHASE 2: Finalize SQLite ZIP (within same workflow)
-  finalize_db_with_version:
-    needs: merge_and_prepare_temp_db # This ensures Phase 2 runs only after Phase 1 succeeds
-    if: needs.run_full_conversion_if_ready.outputs.proceed_conversion == 'true' # Conditional run
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Download Temp Files from Previous Job
-        uses: actions/download-artifact@v4
-        with:
-          name: temp-conversion-artifacts
-          path: conversation/Temp/
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Install Required Python Packages
-        run: pip install sqlite-utils
-
-      - name: Rename Temp DB, Zip It, Update Logs (Phase 2 Logic)
-        run: |
-          python3 <<EOF
-          import sqlite3
-          import zipfile
-          import os
-          from datetime import datetime
-          import traceback
-
-          try:
-              version_path = "conversation/Temp/version.txt"
-              db_source = "conversation/Temp/temp.db"
-              log_path = "conversation/Temp/conversion_log.txt"
-
-              if not os.path.exists(version_path):
-                  raise FileNotFoundError(f"Error: version.txt not found at {version_path}. This workflow expects it to be committed by Phase 1.")
-              if not os.path.exists(db_source):
-                  raise FileNotFoundError(f"Error: temp.db not found at {db_source}. Phase 1 must complete successfully first.")
-
-              with open(version_path, "r") as vfile:
-                  version_name = vfile.read().strip()
-
-              os.makedirs("conversation/Ready", exist_ok=True)
               db_target = f"conversation/Ready/{version_name}.db"
 
-              os.rename(db_source, db_target)
+              os.rename(db_name_temp, db_target) # Rename temp DB to final name
 
               with sqlite3.connect(db_target) as conn:
                   conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
@@ -213,41 +161,39 @@ jobs:
               with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   zipf.write(db_target, os.path.basename(db_target))
 
-              os.remove(db_target)
+              os.remove(db_target) # Remove the .db file after zipping
 
               with open(log_path, "a") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Phase 2: Version '{version_name}' applied.\n")
-                  logfile.write(f"{now} Phase 2: Final ZIP created: {zip_name.split('/')[-1]}.\n")
-                  logfile.write(f"{now} Phase 2: Finalization Complete.\n")
+                  logfile.write(f"{now} Phase 2: Version '{version_name}' applied and final ZIP created: {zip_name.split('/')[-1]}.\n")
+                  logfile.write(f"{now} Full Conversion Complete.\n")
 
           except Exception as e:
               os.makedirs("conversation/Temp", exist_ok=True)
               log_path_error = "conversation/Temp/conversion_log.txt"
               with open(log_path_error, "a") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Phase 2: Error occurred during finalization: {str(e)}\n")
+                  logfile.write(f"{now} ERROR: Full Conversion Workflow Failed: {str(e)}\n")
                   logfile.write(traceback.format_exc())
-              raise
+              raise # Re-raise to fail the workflow
           EOF
 
-      - name: Commit Finalized Files and Clean Up All Temp
+      - name: Commit Finalized Files and Clean Up All Temp Files (including markers)
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
           # Add the newly created finalized ZIP file
           git add conversation/Ready/*.zip
-          # Add the updated log file and the version.txt
-          git add conversation/Temp/conversion_log.txt conversation/Temp/version.txt
+          # Add the updated log file
+          git add conversation/Temp/conversion_log.txt
           
-          # Remove temporary DB and original source files from the repository
-          git rm conversation/Temp/temp.db || true
+          # Remove original source files and all marker/temp files from the repository
           git rm conversation/csv/scanning.xlsx || true
           git rm conversation/csv/prices.xlsx || true
-          
-          # Clean up the status marker file for the next run
-          git rm conversation/Temp/file_ready_status.txt || true
-          
-          git commit -m "Full Conversion: Finalized ZIP and cleaned up all temporary/source files."
+          git rm conversation/Temp/temp_conversion.db || true # Ensure this temp DB is removed
+          git rm conversation/Temp/version.txt || true # If version.txt is created, delete it
+          git rm conversation/Temp/both_files_ready.txt || true # Delete the combined trigger file
+
+          git commit -m "Full Conversion: Finalized ZIP, cleaned up all temporary files and source data."
           git push
