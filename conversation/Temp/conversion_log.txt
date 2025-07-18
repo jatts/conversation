@@ -1,0 +1,5 @@
+[2025-07-18 12:31:15] Full Conversion Workflow Started.
+[2025-07-18 12:31:15] Reading input files.
+[2025-07-18 12:31:16] Phase 1: Data merged and temporary DB created: conversation/Temp/temp_conversion.db.
+[2025-07-18 12:31:16] Phase 2: Version 'DB_Version_20250718_123116' applied and final ZIP created: DB_Version_20250718_123116.zip.
+[2025-07-18 12:31:16] Full Conversion Complete.
