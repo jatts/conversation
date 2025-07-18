@@ -103,16 +103,23 @@ jobs:
         env:
           PYTHONUNBUFFERED: 1
 
-      - name: Commit merged_temp.csv and version.txt
+      - name: Commit merged_temp.csv and version.txt (and rebase if needed)
         if: steps.check_files.outputs.both_files_exist == 'true'
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          # Stage the changes FIRST, before attempting to pull/rebase
+          
+          # Stage the changes
           git add conversation/Temp/merging_temp.csv
           git add conversation/Temp/version.txt
           git add conversation/Logs/workflow_activity.log
-          # Pull latest changes from remote before pushing to avoid conflicts
+          
+          # Attempt to commit locally first. This creates a commit.
+          # We use '|| true' to prevent the workflow from failing if there are no changes to commit (unlikely here).
+          git commit -m "Initial Merge: Created merging_temp.csv and version.txt." || echo "No new changes to commit locally."
+          
+          # Now, pull latest changes from remote and rebase our new commit on top of them
           git pull --rebase origin main || true # Assuming 'main' is your branch name
-          git commit -m "Initial Merge: Created merging_temp.csv and version.txt." || echo "No new changes to commit."
+          
+          # Finally, push the rebased commits
           git push
