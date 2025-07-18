@@ -4,13 +4,19 @@ name: Main Conversion Workflow (Triggered by Version File)
 on:
   push:
     paths:
-      - 'conversation/Temp/version.txt' # Triggers ONLY when version.txt is created/modified
+      - 'conversation/Temp/version.txt' # Triggers ONLY when version.txt is created/modified and pushed
 
 jobs:
   run_full_conversion:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
+      - name: Download conversion artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: conversion-data
+          path: conversation/Temp/ # Download artifacts to this path
 
       - name: Create Log Entry for Main Workflow Start (Version Triggered)
         run: |
@@ -26,7 +32,7 @@ jobs:
         run: |
           TEMP_DB_FILE="conversation/Temp/temp_conversion.db"
           if [ ! -f "$TEMP_DB_FILE" ]; then
-            echo "Error: temp_conversion.db not found. Aborting Phase 2 conversion."
+            echo "Error: temp_conversion.db not found after downloading artifact. Aborting Phase 2 conversion."
             exit 1
           fi
           echo "temp_conversion.db found. Proceeding with Phase 2."
@@ -37,7 +43,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install Required Python Packages for Phase 2
-        run: pip install pandas openpyxl sqlite-utils # Already installed, but safe to repeat
+        run: pip install pandas openpyxl sqlite-utils
 
       - name: Run Phase 2 Conversion, Zip and Finalize
         run: |
@@ -94,7 +100,7 @@ jobs:
         env:
           PYTHONUNBUFFERED: 1
 
-      - name: Commit Finalized Files and Clean Up All Temp and Source Files
+      - name: Commit Finalized Files and Clean Up All Source Files
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
@@ -103,11 +109,9 @@ jobs:
           git add conversation/Ready/*.zip
           git add conversation/Logs/workflow_activity.log
           
-          # Remove source Excel files and temporary files
+          # Remove source Excel files (temp_conversion.db and version.txt are not in repo, so no git rm needed)
           git rm conversation/csv/scanning.xlsx || true
           git rm conversation/csv/prices.xlsx || true
-          git rm conversation/Temp/temp_conversion.db || true # Ensure this temp DB is removed
-          git rm conversation/Temp/version.txt || true # Delete the version marker file itself
           
-          git commit -m "Full Conversion Finalized: Created ZIP, cleaned up source and temporary files."
+          git commit -m "Full Conversion Finalized: Created ZIP, cleaned up source files."
           git push
