@@ -1,5 +1,5 @@
 # .github/workflows/on_prices_upload.yml
-name: On Prices File Upload - Check & Mark Both Ready
+name: On Prices File Upload - Check & Dispatch Main
 
 on:
   push:
@@ -7,37 +7,37 @@ on:
       - 'conversation/csv/prices.xlsx' # Triggers only when prices.xlsx is pushed
 
 jobs:
-  check_and_mark:
+  check_and_dispatch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
 
-      - name: Check if both files exist and create both_files_ready.txt
+      - name: Create Log Entry for Prices Upload Check
+        run: |
+          mkdir -p conversation/Logs # Ensure Logs directory exists
+          echo "$(date +"%Y-%m-%d %H:%M:%S") - Prices.xlsx uploaded. Checking for scanning.xlsx for main workflow dispatch." >> conversation/Logs/workflow_activity.log
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add conversation/Logs/workflow_activity.log
+          git commit -m "Log: Prices.xlsx upload detected." || echo "No new log entry commit."
+          git push || echo "Log push failed, might be merged by another push."
+
+      - name: Check if both files exist and Dispatch Main Workflow
         run: |
           SCANNING_FILE="conversation/csv/scanning.xlsx"
           PRICES_FILE="conversation/csv/prices.xlsx"
-          BOTH_READY_MARKER="conversation/Temp/both_files_ready.txt"
           
-          mkdir -p conversation/Temp # Ensure Temp directory exists
-
-          echo "Checking for both files readiness after prices.xlsx upload..."
+          echo "Checking if both actual data files exist in the repository..."
           
-          # Check if both actual data files exist in the repository
           if [ -f "$SCANNING_FILE" ] && [ -f "$PRICES_FILE" ]; then
-            echo "Both scanning.xlsx and prices.xlsx found."
+            echo "Both scanning.xlsx and prices.xlsx found. Dispatching main conversion workflow."
             
-            # Create the combined trigger file
-            touch "$BOTH_READY_MARKER"
-            echo "Both files ready at $(date +"%Y-%m-%d %H:%M:%S")" > "$BOTH_READY_MARKER" # Added timestamp
-            echo "Created both_files_ready.txt"
-            
-            git config user.name "github-actions"
-            git config user.email "actions@github.com"
-            git add "$BOTH_READY_MARKER"
-            
-            git commit -m "Created both_files_ready.txt marker after prices.xlsx upload." || echo "No changes to commit for both_files_ready.txt."
-            git push
-            echo "Pushed changes for both_files_ready.txt."
+            # Dispatch the main_conversion_workflow.yml using GitHub CLI
+            # GITHUB_TOKEN is a default token provided by GitHub Actions, no manual setup needed.
+            gh workflow run main_conversion_workflow.yml --ref ${{ github.ref }} || { echo "Failed to dispatch main workflow!"; exit 1; }
+            echo "Main conversion workflow dispatched successfully."
           else
-            echo "Only prices.xlsx (or neither) found. Not creating both_files_ready.txt yet."
+            echo "Only prices.xlsx (or neither) found. Not dispatching main workflow yet."
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This uses the default GitHub-provided token
