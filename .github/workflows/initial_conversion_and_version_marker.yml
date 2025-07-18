@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload conversion artifacts (temp_conversion.db and version.txt)
         if: steps.check_files.outputs.both_files_exist == 'true'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # Changed from v3 to v4
         with:
           name: conversion-data
           path: |
