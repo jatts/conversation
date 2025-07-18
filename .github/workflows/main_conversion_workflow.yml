@@ -1,8 +1,10 @@
 # .github/workflows/main_conversion_workflow.yml
-name: Main Conversion Workflow (Dispatched)
+name: Main Conversion Workflow (Triggered by Version File)
 
 on:
-  workflow_dispatch: # This workflow will now be triggered by workflow_dispatch events
+  push:
+    paths:
+      - 'conversation/Temp/version.txt' # Triggers ONLY when version.txt is created/modified
 
 jobs:
   run_full_conversion:
@@ -10,93 +12,58 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Create Log Entry for Main Workflow Start (Dispatched)
+      - name: Create Log Entry for Main Workflow Start (Version Triggered)
         run: |
-          mkdir -p conversation/Logs # Ensure Logs directory exists
-          echo "$(date +"%Y-%m-%d %H:%M:%S") - Main conversion workflow started via dispatch." >> conversation/Logs/workflow_activity.log
+          mkdir -p conversation/Logs
+          echo "$(date +"%Y-%m-%d %H:%M:%S") - Main conversion workflow triggered by version.txt." >> conversation/Logs/workflow_activity.log
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add conversation/Logs/workflow_activity.log
-          git commit -m "Log: Main workflow dispatched and started." || echo "No new log entry commit."
+          git commit -m "Log: Main workflow triggered by version.txt." || echo "No new log entry commit."
           git push || echo "Log push failed."
 
-      - name: Verify both actual data files exist before starting conversion
+      - name: Verify temp_conversion.db exists before Phase 2
         run: |
-          SCANNING_FILE="conversation/csv/scanning.xlsx"
-          PRICES_FILE="conversation/csv/prices.xlsx"
-          
-          if [ ! -f "$SCANNING_FILE" ]; then
-            echo "Error: scanning.xlsx not found. Aborting conversion."
+          TEMP_DB_FILE="conversation/Temp/temp_conversion.db"
+          if [ ! -f "$TEMP_DB_FILE" ]; then
+            echo "Error: temp_conversion.db not found. Aborting Phase 2 conversion."
             exit 1
           fi
-          if [ ! -f "$PRICES_FILE" ]; then
-            echo "Error: prices.xlsx not found. Aborting conversion."
-            exit 1
-          fi
-          echo "Both scanning.xlsx and prices.xlsx found. Proceeding with conversion."
+          echo "temp_conversion.db found. Proceeding with Phase 2."
 
-      - name: Set up Python
+      - name: Set up Python for Phase 2
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
-      - name: Install Required Python Packages
-        run: pip install pandas openpyxl sqlite-utils
+      - name: Install Required Python Packages for Phase 2
+        run: pip install pandas openpyxl sqlite-utils # Already installed, but safe to repeat
 
-      - name: Run Full Conversion (Phase 1 & Phase 2 Logic)
+      - name: Run Phase 2 Conversion, Zip and Finalize
         run: |
           python3 <<EOF
-          import pandas as pd
           import sqlite3
           import os
           from datetime import datetime
           import zipfile
           import traceback
+          import sys
 
           try:
-              scan_file = "conversation/csv/scanning.xlsx"
-              price_file = "conversation/csv/prices.xlsx"
-              
-              os.makedirs("conversation/Temp", exist_ok=True)
-              os.makedirs("conversation/Ready", exist_ok=True)
-              log_path = "conversation/Temp/conversion_log.txt"
-
-              with open(log_path, "w") as logfile:
-                  now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Full Conversion Workflow Started.\n")
-                  logfile.write(f"{now} Reading input files.\n")
-
-              scan_df = pd.read_excel(scan_file)
-              price_df = pd.read_excel(price_file)
-
-              price_df["OriginalPrice"] = pd.to_numeric(price_df["OriginalPrice"], errors='coerce')
-              price_df = price_df[["Barcode", "OriginalPrice"]]
-
-              merged_df = pd.merge(scan_df, price_df, on="Barcode", how="left")
-
-              merged_df["OriginalPrice"] = merged_df["OriginalPrice"].apply(
-                  lambda x: str(int(x)) if pd.notna(x) and x == int(x) else ('' if pd.isna(x) else str(x))
-              )
-
-              final_columns = ["Barcode", "Article", "Percentage", "OriginalPrice"]
-              merged_df = merged_df[final_columns]
-
               db_name_temp = "conversation/Temp/temp_conversion.db"
-              conn = sqlite3.connect(db_name_temp)
-              merged_df.to_sql("sc", conn, if_exists="replace", index=False, dtype={'OriginalPrice': 'TEXT'})
-              conn.commit()
-              conn.execute("VACUUM;")
-              conn.close()
+              
+              os.makedirs("conversation/Ready", exist_ok=True)
+              log_path = "conversation/Logs/workflow_activity.log" # Log to the central activity log
 
               with open(log_path, "a") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Phase 1: Data merged and temporary DB created: {db_name_temp}.\n")
+                  logfile.write(f"{now} Phase 2 Conversion Started: Finalizing DB and Zipping.\n")
 
               timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
               version_name = f"DB_Version_{timestamp}"
               db_target = f"conversation/Ready/{version_name}.db"
 
-              os.rename(db_name_temp, db_target)
+              os.rename(db_name_temp, db_target) # Rename temp DB to final name
 
               with sqlite3.connect(db_target) as conn:
                   conn.execute("CREATE TABLE IF NOT EXISTS databaseversion (DBversion TEXT)")
@@ -106,39 +73,41 @@ jobs:
                   conn.execute("VACUUM;")
 
               zip_name = f"conversation/Ready/{version_name}.zip"
-              # Corrected 'BLP_DEFLATED' to 'ZIP_DEFLATED'
               with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   zipf.write(db_target, os.path.basename(db_target))
 
-              os.remove(db_target)
+              os.remove(db_target) # Remove the .db file after zipping
 
               with open(log_path, "a") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} Phase 2: Version '{version_name}' applied and final ZIP created: {zip_name.split('/')[-1]}.\n")
-                  logfile.write(f"{now} Full Conversion Complete.\n")
+                  logfile.write(f"{now} Phase 2 Complete. Version '{version_name}' applied and final ZIP created: {zip_name.split('/')[-1]}.\n")
+                  logfile.write(f"{now} Full Conversion Workflow Complete.\n")
 
           except Exception as e:
-              os.makedirs("conversation/Temp", exist_ok=True)
-              log_path_error = "conversation/Temp/conversion_log.txt"
+              log_path_error = "conversation/Logs/workflow_activity.log"
               with open(log_path_error, "a") as logfile:
                   now = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-                  logfile.write(f"{now} ERROR: Full Conversion Workflow Failed: {str(e)}\n")
+                  logfile.write(f"{now} ERROR: Phase 2 Conversion Failed: {str(e)}\n")
                   logfile.write(traceback.format_exc())
-              raise
+              sys.exit(1) # Fail the job if conversion fails
           EOF
+        env:
+          PYTHONUNBUFFERED: 1
 
-      - name: Commit Finalized Files and Clean Up All Temp Files
+      - name: Commit Finalized Files and Clean Up All Temp and Source Files
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
+          # Add the newly created finalized ZIP file and updated log file
           git add conversation/Ready/*.zip
-          git add conversation/Temp/conversion_log.txt
+          git add conversation/Logs/workflow_activity.log
           
+          # Remove source Excel files and temporary files
           git rm conversation/csv/scanning.xlsx || true
           git rm conversation/csv/prices.xlsx || true
-          git rm conversation/Temp/temp_conversion.db || true
-          git rm conversation/Temp/version.txt || true
+          git rm conversation/Temp/temp_conversion.db || true # Ensure this temp DB is removed
+          git rm conversation/Temp/version.txt || true # Delete the version marker file itself
           
-          git commit -m "Full Conversion: Finalized ZIP, cleaned up all temporary files and source data."
+          git commit -m "Full Conversion Finalized: Created ZIP, cleaned up source and temporary files."
           git push
