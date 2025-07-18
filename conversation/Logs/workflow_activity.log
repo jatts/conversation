@@ -9,3 +9,5 @@
 [2025-07-18 19:56:12] DB conversion and zipping complete. Final ZIP created: 2025-0006.zip.
 [2025-07-18 19:56:12] Workflow Finished.
 2025-07-18 19:58:10 - Prices.xlsx file received.
+[2025-07-18 19:58:48] Both files received. Starting initial merge.
+[2025-07-18 19:58:48] Merging complete. merging_temp.csv created. Version marker file (version.txt) created with content: DB_Version_20250718_195848.
