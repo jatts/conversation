@@ -1,4 +1,4 @@
-l# .github/workflows/on_scanning_upload.yml
+# .github/workflows/on_scanning_upload.yml
 name: On Scanning File Upload - Log Received
 
 on:
