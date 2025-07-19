@@ -1,4 +1,4 @@
-# .github/workflows/check_and_initial_merge.yml
+# .github/wrkflows/check_and_initial_merge.yml
 name: Check Files and Initial Merge
 
 on:
