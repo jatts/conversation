@@ -6,3 +6,5 @@
 [2025-07-19 15:12:04] DB conversion and zipping complete. Final ZIP created: 2025-0100.zip.
 [2025-07-19 15:12:04] Workflow Finished.
 2025-07-19 15:28:10 - Scanning.xlsx file received.
+[2025-07-19 15:28:40] Both files received. Starting initial merge.
+[2025-07-19 15:28:40] Merging complete. merging_temp.csv created. Version marker file (version.txt) created with content: DB_Version_20250719_152840.
