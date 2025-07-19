@@ -106,7 +106,7 @@ jobs:
         env:
           PYTHONUNBUFFERED: 1
 
-      - name: Commit merged_temp.csv and version.txt (and log updates)
+      - name: Commit merged_temp.csv, version.txt, and log updates (and sync with remote)
         if: steps.check_files.outputs.both_files_exist == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Ensure GITHUB_TOKEN is available
@@ -114,25 +114,25 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # Explicitly fetch latest changes from remote
-          git fetch origin main 
-          
-          # Checkout to main branch
-          git checkout main
-          
-          # Merge remote changes into local main branch
-          # Use --allow-unrelated-histories if the first merge fails without it.
-          # --no-ff ensures a merge commit is always created, which is good for history in automated commits.
-          git merge origin/main --no-ff --allow-unrelated-histories || true 
-          
           # Add all new/modified files to staging
           git add conversation/Temp/merging_temp.csv
           git add conversation/Temp/version.txt
           git add conversation/Logs/workflow_activity.log
           
-          # Commit the changes. 'git commit --allow-empty' if you expect no changes at times.
-          # However, here we expect changes, so no '|| true' on commit.
-          git commit -m "Initial Merge: Created merging_temp.csv, version.txt, and updated logs."
+          # Commit the local changes FIRST. This makes them part of the local history.
+          git commit -m "WIP: Local changes from initial merge and log update." || echo "No local changes to commit. This should not happen if files were just created."
           
-          # Push the changes, forcing with lease to overcome race conditions
-          git push --force-with-lease
+          # Fetch the latest changes from the remote.
+          git fetch origin main
+          
+          # Checkout to the main branch
+          git checkout main
+          
+          # Merge the remote changes into the local main branch.
+          # This will create a merge commit if there are differences, resolving conflicts.
+          # --no-ff ensures a merge commit is always created.
+          # --allow-unrelated-histories is included as a safeguard for initial merges if needed.
+          git merge origin/main --no-ff --allow-unrelated-histories
+          
+          # Finally, push the updated local main branch (which now includes both local and merged remote changes).
+          git push
