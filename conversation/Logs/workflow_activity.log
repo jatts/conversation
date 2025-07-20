@@ -15,3 +15,4 @@
 2025-07-20 06:02:33 - Prices.xlsx file received.
 [2025-07-20 06:03:19] Both files received. Starting initial merge.
 [2025-07-20 06:03:24] Merging complete. merging_temp.csv created. Version marker file (version.txt) created with content: DB_Version_20250720_060324.
+2025-07-20 06:06:20 - Final conversion workflow triggered by version.txt.
